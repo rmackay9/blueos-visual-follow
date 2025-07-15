@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 """
-Optical Flow MAVLink Message Module
+Visual Follow MAVLink Message Module
 
-This module handles sending OPTICAL_FLOW and STATUSTEXT MAVLink messages to the vehicle
+This module handles sending MAVLink messages to the vehicle
 via BlueOS MAV2Rest API interface.
 """
 
@@ -59,7 +59,7 @@ STATUSTEXT_TEMPLATE = """{{
     "severity": {{
       "type": "{severity}"
     }},
-    "text": "{text}",
+    "text": {text_array},
     "id": {id},
     "chunk_seq": {chunk_seq}
   }}
@@ -188,12 +188,23 @@ def send_statustext_msg(sysid: int,
             text = text[:50]
             logger.warning(f"{logging_prefix_str} text truncated to 50 characters")
 
+        # Convert text string to character array as required by MAV2Rest
+        # MAVLink STATUSTEXT expects a 50-character array, null-terminated
+        text_chars = list(text)
+        
+        # Pad with null terminators to make it 50 characters total
+        while len(text_chars) < 50:
+            text_chars.append('\u0000')
+        
+        # Convert to JSON array format
+        text_array = json.dumps(text_chars)
+
         # Format the STATUSTEXT message
         statustext_data = STATUSTEXT_TEMPLATE.format(
             sysid=sysid,
             component_id=MAV_COMP_ID_ONBOARD_COMPUTER,
             severity=severity,
-            text=text,
+            text_array=text_array,
             id=message_id,
             chunk_seq=chunk_seq
         )
