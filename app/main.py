@@ -106,7 +106,11 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
         visualfollow_running = True
 
         # Send status message to ground station
-        mavlink_interface.send_statustext_msg(settings.get_mavlink_sysid(), "OpticalFlow: started")
+        send_text_result = mavlink_interface.send_statustext_msg(settings.get_mavlink_sysid(), "VisualFollow: started")
+        if not send_text_result["success"]:
+            logger.error(f"{logging_prefix_str} MAV2Rest connection failed: {send_text_result['message']}")
+            visualfollow_running = False
+            return
 
         # Get camera setting
         camera_hfov = settings.get_camera_horizontal_fov(camera_type)
@@ -123,24 +127,8 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
         # Testing capturing frame from RTSP stream
         frame_result = image_capture.capture_frame_from_stream(rtsp_url)
         if not frame_result["success"]:
+            mavlink_interface.send_statustext_msg(settings.get_mavlink_sysid(), "VisualFollow: failed to capture image, stopping", "MAV_SEVERITY_ERROR")
             logger.error(f"{logging_prefix_str} failed to capture frame: {frame_result['message']}")
-            visualfollow_running = False
-            return
-
-        # Test MAV2Rest connection by sending a test OPTICAL_FLOW message
-        mav_test = mavlink_interface.send_optical_flow_msg(
-            sysid=target_system_id,
-            flow_x=0.0,
-            flow_y=0.0,
-            flow_comp_m_x=0.0,
-            flow_comp_m_y=0.0,
-            quality=0,
-            ground_distance=-1,
-            flow_rate_x=0.0,
-            flow_rate_y=0.0
-        )
-        if not mav_test["success"]:
-            logger.error(f"{logging_prefix_str} MAV2Rest connection test failed: {mav_test['message']}")
             visualfollow_running = False
             return
 
@@ -154,7 +142,7 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
         # Send status text that visual follow is running
         mavlink_interface.send_statustext_msg(target_system_id, "VisualFollow: running")
 
-        # Optical flow main loop
+        # main loop
         last_frame_time = time.time()
         last_log_time = last_frame_time
         last_send_time = last_frame_time
@@ -179,6 +167,7 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
 
                     # if no frames captured in 10 seconds, restart the capture
                     if time.time() - last_frame_time > 10:
+                        mavlink_interface.send_statustext_msg(settings.get_mavlink_sysid(), "VisualFollow: restarting image capture", "MAV_SEVERITY_ERROR")
                         logger.error(f"{logging_prefix_str} No frames captured in 10 seconds, restarting capture")
                         image_capture.cleanup_video_capture()
                         last_frame_time = time.time()
@@ -223,7 +212,7 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
                         # If we can't get gimbal attitude but it's required, send anyway
                         logger.warning(f"{logging_prefix_str} gimbal attitude unavailable, sending anyway")
 
-                optflow_calc_time = 0.0
+                tracking_time = 0.0
                 mavlink_send_time = 0.0
 
                 if should_send_target:
@@ -233,59 +222,42 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
                     height = frame_result["height"]
 
                     # Perform visual follow calculation
-                    optflow_start_time = time.time()
-                    opticalflow_result = tracking.get_optical_flow(frame, last_frame_capture_time, False)
-                    optflow_calc_time = time.time() - optflow_start_time
+                    tracking_start_time = time.time()
+                    tracking_result = tracking.get_tracking_flow(frame, None, False)
+                    tracking_time = time.time() - tracking_start_time
 
-                    # calculate hfov
-                    camera_vfov = calculate_vertical_fov(camera_hfov, width, height)
+                    if tracking_result.get("success"):
+                        # calculate hfov
+                        camera_vfov = calculate_vertical_fov(camera_hfov, width, height)
 
-                    if opticalflow_result.get("success"):
-                        # Extract flow values in pixels
-                        flow_x_dpi = opticalflow_result.get("flow_x", 0.0)
-                        flow_y_dpi = opticalflow_result.get("flow_y", 0.0)
-                        dt = opticalflow_result.get("dt", 0.0)
+                        # get center of tracked object and conver to pitch and yaw angles
+                        center_x = tracking_result.get("center_x", 0.0)
+                        center_y = tracking_result.get("center_y", 0.0)
+                        pitch_angle_deg = center_y * camera_vfov * 0.5
+                        yaw_angle_deg = center_x * camera_hfov * 0.5
 
-                        # Convert pixel flow to angular flow (radians/second)
-                        # Assuming a simple conversion based on camera FOV and frame rate
-                        pixels_per_radian_h = width / math.radians(camera_hfov)
-                        pixels_per_radian_v = height / math.radians(camera_vfov)
+                        logger.debug(f"{logging_prefix_str} Frame:{frame_count} "
+                                        f"center_x={center_x:.4f}, center_y={center_y:.4f} "
+                                        f"pitch={pitch_angle_deg:.4f}, yaw={yaw_angle_deg:.4f}")
 
-                        if dt > 0 and dt < 0.2:
-                            # convert flow to radians/second
-                            flow_x_rads = flow_x_dpi / (pixels_per_radian_h * dt)
-                            flow_y_rads = flow_y_dpi / (pixels_per_radian_v * dt)
+                        # Send GIMBAL_MANAGER_PITCH_YAW message
+                        mavlink_start_time = time.time()
+                        send_result = mavlink_interface.send_gimbal_manager_set_pitchyaw(
+                            sysid=target_system_id,   # system ID of the target vehicle
+                            pitch=pitch_angle_deg,    # pitch angle in degrees
+                            yaw=yaw_angle_deg,        # yaw angle in degrees
+                        )
+                        mavlink_send_time = time.time() - mavlink_start_time
 
-                            logger.debug(f"{logging_prefix_str} Frame:{frame_count} "
-                                         f"flow_x={flow_x_dpi:.4f}, flow_y={flow_y_dpi:.4f} "
-                                         f"flow_rate_x={flow_x_rads:.4f} rad/s, flow_rate_y={flow_y_rads:.4f} rad/s dt={dt:.4f}s")
-
-                            # Send OPTICAL_FLOW message
-                            mavlink_start_time = time.time()
-                            send_result = mavlink_interface.send_optical_flow_msg(
-                                sysid=target_system_id,   # system ID of the target vehicle
-                                flow_x=int(flow_x_dpi),   # flow_x in pixels
-                                flow_y=int(flow_y_dpi),   # flow_y in pixels
-                                flow_comp_m_x=0.0,        # flow_comp_m_x (gimbaled camera so always zero)
-                                flow_comp_m_y=0.0,        # flow_comp_m_y (gimbaled camera so always zero)
-                                quality=255,              # quality (0 to 255, 255 means good quality)
-                                ground_distance=-1,       # ground distance is unknown
-                                flow_rate_x=flow_x_rads,  # flow rate in x direction (rad/s)
-                                flow_rate_y=flow_y_rads   # flow rate in y direction (rad/s)
-                            )
-                            mavlink_send_time = time.time() - mavlink_start_time
-
-                            if send_result["success"]:
-                                sent_count += 1
-                            else:
-                                logger.error(f"{logging_prefix_str} Failed to send OPTICAL_FLOW: {send_result['message']}")
+                        if send_result["success"]:
+                            sent_count += 1
                         else:
-                            logger.warning(f"{logging_prefix_str} Invalid dt value: {dt:.4f}s, not sending OPTICAL_FLOW")
+                            logger.error(f"{logging_prefix_str} Failed to send GIMBAL_MANAGER_SET_PITCHYAW: {send_result['message']}")
 
                         # record last send time
                         last_send_time = time.time()
                     else:
-                        logger.debug(f"{logging_prefix_str} optical flow calculation failed: {opticalflow_result.get('message', 'unknown error')}")
+                        logger.debug(f"{logging_prefix_str} tracking failed: {tracking_result.get('message', 'unknown error')}")
                 else:
                     # log that we are waiting for gimbal to face downwards
                     logger.debug(f"{logging_prefix_str} waiting for gimbal to face downwards")
@@ -299,7 +271,7 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
                                  f"Total:{loop_total_time*1000:.1f}ms "
                                  f"FrameCapture:{frame_capture_time*1000:.1f}ms "
                                  f"GimbalCheck:{gimbal_check_time*1000:.1f}ms "
-                                 f"OpticalFlow:{optflow_calc_time*1000:.1f}ms "
+                                 f"Tracking:{tracking_time*1000:.1f}ms "
                                  f"MAVLinkSend:{mavlink_send_time*1000:.1f}ms")
 
                 # log every 5 seconds
@@ -339,7 +311,7 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
 # Called from index.html's Test button
 def test_rtsp_connection(rtsp_url: str, camera_type: str) -> Dict[str, Any]:
     """
-    Test RTSP connection and capture a frame with optical flow calculation.
+    Test RTSP connection and capture a frame and perform tracking.
     Returns connection status and basic stream information.
     """
 
@@ -359,12 +331,12 @@ def test_rtsp_connection(rtsp_url: str, camera_type: str) -> Dict[str, Any]:
         width = frame_result["width"]
         height = frame_result["height"]
 
-        # Test optical flow calculation
-        opticalflow_result = tracking.get_optical_flow(frame, time.time(), True)  # Include augmented image
+        # Test tracking calculation
+        tracking_result = tracking.get_tracking_flow(frame, None, True)
 
         # Encode frame as base64 (use augmented image if available)
-        if opticalflow_result.get("success") and opticalflow_result.get("image_base64"):
-            image_base64 = opticalflow_result["image_base64"]
+        if tracking_result.get("success") and tracking_result.get("image_base64"):
+            image_base64 = tracking_result["image_base64"]
         else:
             # Fall back to original frame
             _, buffer = cv2.imencode('.jpg', frame)
@@ -376,7 +348,7 @@ def test_rtsp_connection(rtsp_url: str, camera_type: str) -> Dict[str, Any]:
             "connection_method": rtsp_url,
             "resolution": f"{width}x{height}",
             "image_base64": image_base64,
-            "optical_flow": opticalflow_result
+            "tracking": tracking_result
         }
 
     except Exception as e:
@@ -459,11 +431,11 @@ async def get_camera_configs() -> Dict[str, Any]:
         return {"success": False, "message": str(e)}
 
 
-# Load opticalflow settings
+# Load settings
 @app.post("/visual-follow/get-settings")
-async def get_opticalflow_settings() -> Dict[str, Any]:
+async def get_settings() -> Dict[str, Any]:
     """Get saved camera settings"""
-    logger.debug("Getting opticalflow settings")
+    logger.debug("Getting all settings")
 
     try:
         # Get the last used camera settings
@@ -497,23 +469,23 @@ async def get_opticalflow_settings() -> Dict[str, Any]:
             "gimbal_attitude": gimbal_settings
         }
     except Exception as e:
-        logger.exception(f"Error getting opticalflow settings: {str(e)}")
+        logger.exception(f"Error getting all settings: {str(e)}")
         return {"success": False, "message": f"Error: {str(e)}"}
 
 
-# Save opticalflow settings
+# Save all settings
 @app.post("/visual-follow/save-settings")
-async def save_opticalflow_settings(
+async def save_settings(
     type: str = Query(...),
     rtsp: str = Query(...),
     fov: float = Query(...),
     flight_controller_sysid: int = Query(...),  # Keep this for HTML compatibility
     use_gimbal_attitude: bool = Query(True)     # Default to True
 ) -> Dict[str, Any]:
-    """Save camera settings and other opticalflow settings to persistent storage (using query parameters)"""
+    """Save all settings to persistent storage (using query parameters)"""
     # Map flight_controller_sysid to sysid for internal use
     sysid = flight_controller_sysid
-    logger.info(f"Saving opticalflow settings: camera_type={type}, rtsp_url={rtsp}, fov={fov}, "
+    logger.info(f"Saving settings: camera_type={type}, rtsp_url={rtsp}, fov={fov}, "
                 f"sysid={sysid}, use_gimbal_attitude={use_gimbal_attitude}")
 
     # Save camera settings
@@ -531,11 +503,11 @@ async def save_opticalflow_settings(
         return {"success": False, "message": "Failed to save some settings"}
 
 
-# Get opticalflow enabled state
+# Get enabled state
 @app.get("/visual-follow/get-enabled-state")
 async def get_visualfollow_enabled_state() -> Dict[str, Any]:
-    """Get saved opticalflow enabled state (supports both GET and POST)"""
-    logger.debug("Getting opticalflow enabled state")
+    """Get enabled state"""
+    logger.debug("Getting enabled state")
 
     try:
         enabled = settings.get_visualfollow_enabled()
@@ -544,16 +516,16 @@ async def get_visualfollow_enabled_state() -> Dict[str, Any]:
             "enabled": enabled
         }
     except Exception as e:
-        logger.exception(f"Error getting opticalflow enabled state: {str(e)}")
+        logger.exception(f"Error getting enabled state: {str(e)}")
         return {"success": False, "message": f"Error: {str(e)}", "enabled": False}
 
 
-# Save opticalflow enabled state
+# Save enabled state
 @app.post("/visual-follow/save-enabled-state")
-async def save_opticalflow_enabled_state(enabled: bool = Query(...)) -> Dict[str, Any]:
-    """Save opticalflow enabled state to persistent storage (using query parameter)"""
-    logger.info(f"Optical flow enabled state: {enabled}")
-    success = settings.update_opticalflow_enabled(enabled)
+async def save_enabled_state(enabled: bool = Query(...)) -> Dict[str, Any]:
+    """Save enabled state to persistent storage (using query parameter)"""
+    logger.info(f"Enabled state: {enabled}")
+    success = settings.update_enabled(enabled)
 
     if success:
         return {"success": True, "message": f"Enabled state saved: {enabled}"}
@@ -561,10 +533,10 @@ async def save_opticalflow_enabled_state(enabled: bool = Query(...)) -> Dict[str
         return {"success": False, "message": "Failed to save enabled state"}
 
 
-# Test image retrieval from the RTSP stream and optical flow calculation
+# Test image retrieval from the RTSP stream
 @app.post("/visual-follow/test")
-async def test_opticalflow(type: str = Query(...), rtsp: str = Query(...)) -> Dict[str, Any]:
-    """Test opticalflow functionality with RTSP connection"""
+async def test(type: str = Query(...), rtsp: str = Query(...)) -> Dict[str, Any]:
+    """Test RTSP connection"""
     logger.info(f"Testing with camera_type={type}, rtsp={rtsp}")
 
     try:
@@ -579,32 +551,32 @@ async def test_opticalflow(type: str = Query(...), rtsp: str = Query(...)) -> Di
             result = future.result(timeout=60)  # 60 second timeout should be sufficient
 
         if result["success"]:
-            logger.info(f"RTSP test successful for {type}: {result['message']}")
+            logger.info(f"Test successful for {type}: {result['message']}")
             # Add camera type to the response
             result["camera_type"] = type
             result["rtsp_url"] = rtsp
         else:
-            logger.warning(f"RTSP test failed for {type}: {result['message']}")
+            logger.warning(f"Test failed for {type}: {result['message']}")
 
         return result
 
     except concurrent.futures.TimeoutError:
-        logger.error(f"RTSP test timed out for {type} camera")
+        logger.error(f"Test timed out for {type} camera")
         return {
             "success": False,
             "message": "Test timed out - unable to connect to camera within 60 seconds",
             "error": "Connection timeout"
         }
     except Exception as e:
-        logger.exception(f"Error during opticalflow test: {str(e)}")
+        logger.exception(f"Error during test: {str(e)}")
         return {"success": False, "message": f"Test failed: {str(e)}"}
 
 
-# Get opticalflow running status
+# Get running status
 @app.get("/visual-follow/status")
-async def get_opticalflow_status() -> Dict[str, Any]:
-    """Get opticalflow running status"""
-    logger.debug("Getting opticalflow status")
+async def get_status() -> Dict[str, Any]:
+    """Get running status"""
+    logger.debug("Getting status")
 
     try:
         return {
@@ -613,22 +585,22 @@ async def get_opticalflow_status() -> Dict[str, Any]:
             "message": "Running" if visualfollow_running else "Stopped"
         }
     except Exception as e:
-        logger.exception(f"Error getting opticalflow status: {str(e)}")
+        logger.exception(f"Error getting running status: {str(e)}")
         return {"success": False, "message": f"Error: {str(e)}", "running": False}
 
 
-# Start opticalflow (this is called by the frontend's "Run" button)
+# Start visual follow process (this is called by the frontend's "Run" button)
 @app.post("/visual-follow/start")
-async def start_opticalflow(type: str = Query(...), rtsp: str = Query(...)) -> Dict[str, Any]:
-    """Start opticalflow"""
-    logger.info(f"Start opticalflow request received for type={type}, rtsp={rtsp}")
+async def start_visualfollow(type: str = Query(...), rtsp: str = Query(...)) -> Dict[str, Any]:
+    """Start visual follow process"""
+    logger.info(f"Start request received for type={type}, rtsp={rtsp}")
 
     try:
         if visualfollow_running:
-            return {"success": False, "message": "Optical flow is already running"}
+            return {"success": False, "message": "Visual follow is already running"}
 
-        # Start the opticalflow process
-        asyncio.create_task(start_opticalflow_internal(type, rtsp))
+        # Start the visual follow process
+        asyncio.create_task(start_visualfollow_internal(type, rtsp))
 
         # Wait a few seconds to catch immediate failures
         await asyncio.sleep(2)
@@ -637,29 +609,29 @@ async def start_opticalflow(type: str = Query(...), rtsp: str = Query(...)) -> D
         if visualfollow_running:
             return {
                 "success": True,
-                "message": f"Optical flow started successfully with {type} camera"
+                "message": f"Visual follow started successfully with {type} camera"
             }
         else:
             return {
                 "success": False,
-                "message": "Optical flow failed to start (check logs for details)"
+                "message": "Visual follow failed to start (check logs for details)"
             }
 
     except Exception as e:
-        logger.exception(f"Error starting opticalflow: {str(e)}")
+        logger.exception(f"Error starting visual follow: {str(e)}")
         return {"success": False, "message": f"Failed to start: {str(e)}"}
 
 
-# Stop opticalflow (this is called by the frontend's "Stop" button)
+# Stop visual follow (this is called by the frontend's "Stop" button)
 @app.post("/visual-follow/stop")
-async def stop_opticalflow() -> Dict[str, Any]:
-    """Stop opticalflow"""
+async def stop_visualfollow() -> Dict[str, Any]:
+    """Stop visual follow"""
     global visualfollow_running
 
-    logger.info("Stop opticalflow request received")
+    logger.info("Stop visual follow request received")
 
     try:
-        # Stop the opticalflow process
+        # Stop the visual follow process
         visualfollow_running = False
 
         # Clean up video capture when manually stopping
@@ -667,10 +639,10 @@ async def stop_opticalflow() -> Dict[str, Any]:
 
         return {
             "success": True,
-            "message": "Optical flow stopped successfully"
+            "message": "Visual follow stopped successfully"
         }
     except Exception as e:
-        logger.exception(f"Error stopping opticalflow: {str(e)}")
+        logger.exception(f"Error stopping visual follow: {str(e)}")
         return {"success": False, "message": f"Failed to stop: {str(e)}"}
 
 

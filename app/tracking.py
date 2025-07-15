@@ -22,13 +22,12 @@ image_roi = None  # region of interest for tracking
 
 
 # Run tracking algorithm on the provided image using OpenCV's TrackerCSRT
-def get_tracking(curr_image: np.ndarray, capture_time, roi, include_augmented_image: bool) -> Dict[str, Any]:
+def get_tracking(curr_image: np.ndarray, roi, include_augmented_image: bool) -> Dict[str, Any]:
     """
     Run tracking algorithm on the provided image using OpenCV's TrackerCSRT
 
     Args:
         image: Input image as numpy array (BGR format from OpenCV)
-        capture_time: system time that the image was captured
         roi: region of interest to track, if none then any pre-existing region will be used
         include_augmented_image: if true an augmented image with a rectangle drawn around the target should be returned to the caller
 

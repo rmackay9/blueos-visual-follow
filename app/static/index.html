@@ -384,15 +384,14 @@
                                 }
 
                                 // Display visual follow results
-                                if (data.optical_flow) {
-                                    const flow = data.optical_flow;
-                                    if (flow.success) {
+                                if (data.tracking) {
+                                    const tracking = data.tracking;
+                                    if (tracking.success) {
                                         progressLog.value += `\nVisual Follow Results:\n`;
-                                        progressLog.value += `  X: ${flow.flow_x?.toFixed(2) || 'N/A'} pixels\n`;
-                                        progressLog.value += `  Y: ${flow.flow_y?.toFixed(2) || 'N/A'} pixels\n`;
-                                        progressLog.value += `  Delta Time: ${flow.dt?.toFixed(3) || 'N/A'} seconds\n`;
+                                        progressLog.value += `  Center X: ${tracking.center_x?.toFixed(2) || 'N/A'} pixels\n`;
+                                        progressLog.value += `  Center Y: ${tracking.center_y?.toFixed(2) || 'N/A'} pixels\n`;
                                     } else {
-                                        progressLog.value += `\nVisual Follow: ${flow.message || 'No flow detected'}\n`;
+                                        progressLog.value += `\nVisual Follow: ${flow.message || 'No tracking'}\n`;
                                     }
                                 }
                             } else {

@@ -3,8 +3,9 @@
 """
 Visual Follow MAVLink Message Module
 
-This module handles sending MAVLink messages to the vehicle
-via BlueOS MAV2Rest API interface.
+This module handles sending MAVLink messages for visual follow functionality
+via BlueOS MAV2Rest API interface. Supports gimbal control, camera information,
+and tracking status messages.
 """
 
 import time
@@ -65,23 +66,28 @@ STATUSTEXT_TEMPLATE = """{{
   }}
 }}"""
 
-# GIMBAL_MANAGER_SET_PITCHYAW message template
-GIMBAL_MANAGER_SET_PITCHYAW_TEMPLATE = """{{
+# COMMAND_LONG message template for gimbal pitch/yaw control
+COMMAND_LONG_GIMBAL_PITCHYAW_TEMPLATE = """{{
   "header": {{
     "system_id": {sysid},
     "component_id": {component_id},
     "sequence": 0
   }},
   "message": {{
-    "type": "GIMBAL_MANAGER_SET_PITCHYAW",
+    "type": "COMMAND_LONG",
     "target_system": {target_system},
     "target_component": {target_component},
-    "flags": {flags},
-    "gimbal_device_id": {gimbal_device_id},
-    "pitch": {pitch},
-    "yaw": {yaw},
-    "pitch_rate": {pitch_rate},
-    "yaw_rate": {yaw_rate}
+    "command": {{
+      "type": "MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW"
+    }},
+    "confirmation": 0,
+    "param1": {pitch},
+    "param2": {yaw},
+    "param3": {pitch_rate},
+    "param4": {yaw_rate},
+    "param5": {flags},
+    "param6": {gimbal_device_id},
+    "param7": 0.0
   }}
 }}"""
 
@@ -240,10 +246,8 @@ def send_statustext_msg(sysid: int,
         }
 
 
-# Send GIMBAL_MANAGER_SET_PITCHYAW MAVLink message
+# Send GIMBAL_MANAGER gimbal pitch/yaw command via COMMAND_LONG
 def send_gimbal_manager_set_pitchyaw(sysid: int,
-                                     target_system: int,
-                                     target_component: int,
                                      pitch: float,
                                      yaw: float,
                                      pitch_rate: float = float('nan'),
@@ -251,12 +255,10 @@ def send_gimbal_manager_set_pitchyaw(sysid: int,
                                      flags: int = 0,
                                      gimbal_device_id: int = 0) -> Dict[str, Any]:
     """
-    Send GIMBAL_MANAGER_SET_PITCHYAW MAVLink message
+    Send COMMAND_LONG with MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW command
 
     Args:
         sysid: System ID to send message from (normally 1)
-        target_system: Target system ID (normally 1)
-        target_component: Target component ID (normally 1 for autopilot)
         pitch: Pitch angle in radians (negative = down)
         yaw: Yaw angle in radians (positive = right)
         pitch_rate: Pitch rate in radians/second (NaN to use default)
@@ -272,18 +274,18 @@ def send_gimbal_manager_set_pitchyaw(sysid: int,
     logging_prefix_str = "send_gimbal_manager_set_pitchyaw:"
 
     try:
-        # Format the GIMBAL_MANAGER_SET_PITCHYAW message
-        gimbal_data = GIMBAL_MANAGER_SET_PITCHYAW_TEMPLATE.format(
+        # Format the COMMAND_LONG message with gimbal pitch/yaw command
+        gimbal_data = COMMAND_LONG_GIMBAL_PITCHYAW_TEMPLATE.format(
             sysid=sysid,
             component_id=MAV_COMP_ID_ONBOARD_COMPUTER,
-            target_system=target_system,
-            target_component=target_component,
-            flags=flags,
-            gimbal_device_id=gimbal_device_id,
+            target_system=sysid,  # target system is the same as sysid
+            target_component=1,  # always use 1 for autopilot
             pitch=pitch,
             yaw=yaw,
             pitch_rate=pitch_rate,
-            yaw_rate=yaw_rate
+            yaw_rate=yaw_rate,
+            flags=flags,
+            gimbal_device_id=gimbal_device_id
         )
 
         # Send message via MAV2Rest
@@ -291,20 +293,20 @@ def send_gimbal_manager_set_pitchyaw(sysid: int,
         response = post_to_mav2rest(url, gimbal_data)
 
         if response is not None:
-            logger.debug(f"{logging_prefix_str} GIMBAL_MANAGER_SET_PITCHYAW sent with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER} pitch={pitch:.4f} yaw={yaw:.4f}")
+            logger.debug(f"{logging_prefix_str} MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW sent with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER} pitch={pitch:.4f} yaw={yaw:.4f}")
             return {
                 "success": True,
-                "message": f"GIMBAL_MANAGER_SET_PITCHYAW message sent successfully with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER}",
+                "message": f"MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW command sent successfully with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER}",
                 "pitch": pitch,
                 "yaw": yaw,
                 "pitch_rate": pitch_rate,
                 "yaw_rate": yaw_rate,
-                "target_system": target_system,
-                "target_component": target_component,
+                "target_system": sysid,
+                "target_component": 1,
                 "response": response
             }
         else:
-            logger.error(f"{logging_prefix_str} failed to send GIMBAL_MANAGER_SET_PITCHYAW")
+            logger.error(f"{logging_prefix_str} failed to send MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW")
             return {
                 "success": False,
                 "message": "MAV2Rest returned no response",
@@ -701,3 +703,55 @@ def send_set_message_interval(sysid: int,  # target system id
             "message": f"Unexpected error: {str(e)}",
             "unexpected_error": True
         }
+
+
+# Send GIMBAL_MANAGER gimbal pitch/yaw command via COMMAND_LONG using degrees
+def send_gimbal_manager_set_pitchyaw_degrees(sysid: int,
+                                           pitch_degrees: float,
+                                           yaw_degrees: float,
+                                           pitch_rate_degrees: float = float('nan'),
+                                           yaw_rate_degrees: float = float('nan'),
+                                           flags: int = 0,
+                                           gimbal_device_id: int = 0) -> Dict[str, Any]:
+    """
+    Send COMMAND_LONG with MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW command using degrees
+
+    Args:
+        sysid: System ID to send message from (normally 1)
+        pitch_degrees: Pitch angle in degrees (negative = down)
+        yaw_degrees: Yaw angle in degrees (positive = right)
+        pitch_rate_degrees: Pitch rate in degrees/second (NaN to use default)
+        yaw_rate_degrees: Yaw rate in degrees/second (NaN to use default)
+        flags: Gimbal manager flags (0 for default)
+        gimbal_device_id: Gimbal device ID (0 for primary gimbal)
+
+    Returns:
+        Dictionary with send results
+    """
+    import math
+    
+    # Convert degrees to radians
+    pitch_rad = math.radians(pitch_degrees)
+    yaw_rad = math.radians(yaw_degrees)
+    
+    # Convert rates from degrees/sec to radians/sec
+    if not math.isnan(pitch_rate_degrees):
+        pitch_rate_rad = math.radians(pitch_rate_degrees)
+    else:
+        pitch_rate_rad = pitch_rate_degrees
+        
+    if not math.isnan(yaw_rate_degrees):
+        yaw_rate_rad = math.radians(yaw_rate_degrees)
+    else:
+        yaw_rate_rad = yaw_rate_degrees
+    
+    # Call the main function with radians
+    return send_gimbal_manager_set_pitchyaw(
+        sysid=sysid,
+        pitch=pitch_rad,
+        yaw=yaw_rad,
+        pitch_rate=pitch_rate_rad,
+        yaw_rate=yaw_rate_rad,
+        flags=flags,
+        gimbal_device_id=gimbal_device_id
+    )
