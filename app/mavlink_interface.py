@@ -47,28 +47,6 @@ COMMAND_LONG_SET_MESSAGE_INTERVAL_TEMPLATE = """{{
   }}
 }}"""
 
-# OPTICAL_FLOW message template
-OPTICAL_FLOW_TEMPLATE = """{{
-  "header": {{
-    "system_id": {sysid},
-    "component_id": {component_id},
-    "sequence": 0
-  }},
-  "message": {{
-    "type": "OPTICAL_FLOW",
-    "time_usec": {time_usec},
-    "sensor_id": {sensor_id},
-    "flow_x": {flow_x},
-    "flow_y": {flow_y},
-    "flow_comp_m_x": {flow_comp_m_x},
-    "flow_comp_m_y": {flow_comp_m_y},
-    "quality": {quality},
-    "ground_distance": {ground_distance},
-    "flow_rate_x": {flow_rate_x},
-    "flow_rate_y": {flow_rate_y}
-  }}
-}}"""
-
 # STATUSTEXT message template
 STATUSTEXT_TEMPLATE = """{{
   "header": {{
@@ -84,6 +62,79 @@ STATUSTEXT_TEMPLATE = """{{
     "text": "{text}",
     "id": {id},
     "chunk_seq": {chunk_seq}
+  }}
+}}"""
+
+# GIMBAL_MANAGER_SET_PITCHYAW message template
+GIMBAL_MANAGER_SET_PITCHYAW_TEMPLATE = """{{
+  "header": {{
+    "system_id": {sysid},
+    "component_id": {component_id},
+    "sequence": 0
+  }},
+  "message": {{
+    "type": "GIMBAL_MANAGER_SET_PITCHYAW",
+    "target_system": {target_system},
+    "target_component": {target_component},
+    "flags": {flags},
+    "gimbal_device_id": {gimbal_device_id},
+    "pitch": {pitch},
+    "yaw": {yaw},
+    "pitch_rate": {pitch_rate},
+    "yaw_rate": {yaw_rate}
+  }}
+}}"""
+
+# CAMERA_INFORMATION message template
+CAMERA_INFORMATION_TEMPLATE = """{{
+  "header": {{
+    "system_id": {sysid},
+    "component_id": {component_id},
+    "sequence": 0
+  }},
+  "message": {{
+    "type": "CAMERA_INFORMATION",
+    "time_boot_ms": {time_boot_ms},
+    "vendor_name": {vendor_name},
+    "model_name": {model_name},
+    "firmware_version": {firmware_version},
+    "focal_length": {focal_length},
+    "sensor_size_h": {sensor_size_h},
+    "sensor_size_v": {sensor_size_v},
+    "resolution_h": {resolution_h},
+    "resolution_v": {resolution_v},
+    "lens_id": {lens_id},
+    "flags": {flags},
+    "cam_definition_version": {cam_definition_version},
+    "cam_definition_uri": "{cam_definition_uri}"
+  }}
+}}"""
+
+# CAMERA_TRACKING_IMAGE_STATUS message template
+CAMERA_TRACKING_IMAGE_STATUS_TEMPLATE = """{{
+  "header": {{
+    "system_id": {sysid},
+    "component_id": {component_id},
+    "sequence": 0
+  }},
+  "message": {{
+    "type": "CAMERA_TRACKING_IMAGE_STATUS",
+    "tracking_status": {{
+      "type": "{tracking_status}"
+    }},
+    "tracking_mode": {{
+      "type": "{tracking_mode}"
+    }},
+    "target_data": {{
+      "type": "{target_data}"
+    }},
+    "point_x": {point_x},
+    "point_y": {point_y},
+    "radius": {radius},
+    "rec_top_x": {rec_top_x},
+    "rec_top_y": {rec_top_y},
+    "rec_bottom_x": {rec_bottom_x},
+    "rec_bottom_y": {rec_bottom_y}
   }}
 }}"""
 
@@ -104,91 +155,6 @@ def post_to_mav2rest(url: str, data: str) -> Optional[str]:
     except Exception as error:
         logger.error(f"post_to_mav2rest: error : {url}: {error}")
         return None
-
-
-# Low level function to send OPTICAL_FLOW MAVLink message
-def send_optical_flow_msg(sysid: int,
-                          flow_x: int,
-                          flow_y: int,
-                          flow_comp_m_x: float,
-                          flow_comp_m_y: float,
-                          quality: int,
-                          ground_distance: float,
-                          flow_rate_x: float,
-                          flow_rate_y: float) -> Dict[str, Any]:
-    """
-    Send OPTICAL_FLOW MAVLink message
-
-    Args:
-        sysid: System ID to send message (normally 1)
-        flow_x: Flow in x-sensor direction in dpix
-        flow_y: Flow in y-sensor direction in dpiy
-        flow_comp_m_x: Flow in x-axis in ground plane in meters/second
-        flow_comp_m_y: Flow in y-axis in ground plane in meters/second
-        quality: Optical flow quality (0=bad, 255=maximum quality)
-        ground_distance: Ground distance in meters, negative if unknown
-        flow_rate_x: Flow rate about X axis in radians/second
-        flow_rate_y: Flow rate about Y axis in radians/second
-
-    Returns:
-        Dictionary with send results
-    """
-
-    # logging prefix for all messages from this function
-    logging_prefix_str = "send_optical_flow_msg:"
-
-    try:
-        # Get current time in microseconds since UNIX epoch
-        time_usec = int(time.time() * 1000000)
-
-        # Format the OPTICAL_FLOW message
-        optical_flow_data = OPTICAL_FLOW_TEMPLATE.format(
-            sysid=sysid,
-            component_id=MAV_COMP_ID_ONBOARD_COMPUTER,
-            time_usec=time_usec,
-            sensor_id=0,
-            flow_x=int(flow_x),  # Flow in x-sensor direction in dpix
-            flow_y=int(flow_y),  # Flow in y-sensor direction in dpiy
-            flow_comp_m_x=flow_comp_m_x,  # Flow in x-sensor direction in m/s, angular-speed compensated
-            flow_comp_m_y=flow_comp_m_y,  # Flow in y-sensor direction in m/s, angular-speed compensated
-            quality=quality,  # Optical flow quality / confidence. 0: bad, 255: maximum quality
-            ground_distance=ground_distance,  # Ground distance. Positive value: distance known. Negative value: Unknown distance
-            flow_rate_x=flow_rate_x,  # Flow rate about X axis in radians/second
-            flow_rate_y=flow_rate_y   # Flow rate about Y axis in radians/second
-        )
-
-        # Send message via MAV2Rest
-        url = f"{MAV2REST_ENDPOINT}/mavlink"
-        response = post_to_mav2rest(url, optical_flow_data)
-
-        if response is not None:
-            logger.debug(f"{logging_prefix_str} OPTICAL_FLOW sent with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER} flow_rate_x={flow_rate_x:.4f} rad/s, flow_rate_y={flow_rate_y:.4f} rad/s")
-            return {
-                "success": True,
-                "message": f"OPTICAL_FLOW message sent successfully with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER}",
-                "time_usec": time_usec,
-                "flow_rate_x": flow_rate_x,
-                "flow_rate_y": flow_rate_y,
-                "quality": quality,
-                "ground_distance": ground_distance,
-                "sysid": sysid,
-                "response": response
-            }
-        else:
-            logger.error(f"{logging_prefix_str} failed to send OPTICAL_FLOW")
-            return {
-                "success": False,
-                "message": "MAV2Rest returned no response",
-                "network_error": True
-            }
-
-    except Exception as e:
-        logger.error(f"{logging_prefix_str} unexpected error {str(e)}")
-        return {
-            "success": False,
-            "message": f"Unexpected error: {str(e)}",
-            "unexpected_error": True
-        }
 
 
 # Low level function to send STATUSTEXT MAVLink message
@@ -248,6 +214,275 @@ def send_statustext_msg(sysid: int,
             }
         else:
             logger.error(f"{logging_prefix_str} failed to send STATUSTEXT")
+            return {
+                "success": False,
+                "message": "MAV2Rest returned no response",
+                "network_error": True
+            }
+
+    except Exception as e:
+        logger.error(f"{logging_prefix_str} unexpected error {str(e)}")
+        return {
+            "success": False,
+            "message": f"Unexpected error: {str(e)}",
+            "unexpected_error": True
+        }
+
+
+# Send GIMBAL_MANAGER_SET_PITCHYAW MAVLink message
+def send_gimbal_manager_set_pitchyaw(sysid: int,
+                                     target_system: int,
+                                     target_component: int,
+                                     pitch: float,
+                                     yaw: float,
+                                     pitch_rate: float = float('nan'),
+                                     yaw_rate: float = float('nan'),
+                                     flags: int = 0,
+                                     gimbal_device_id: int = 0) -> Dict[str, Any]:
+    """
+    Send GIMBAL_MANAGER_SET_PITCHYAW MAVLink message
+
+    Args:
+        sysid: System ID to send message from (normally 1)
+        target_system: Target system ID (normally 1)
+        target_component: Target component ID (normally 1 for autopilot)
+        pitch: Pitch angle in radians (negative = down)
+        yaw: Yaw angle in radians (positive = right)
+        pitch_rate: Pitch rate in radians/second (NaN to use default)
+        yaw_rate: Yaw rate in radians/second (NaN to use default)
+        flags: Gimbal manager flags (0 for default)
+        gimbal_device_id: Gimbal device ID (0 for primary gimbal)
+
+    Returns:
+        Dictionary with send results
+    """
+
+    # logging prefix for all messages from this function
+    logging_prefix_str = "send_gimbal_manager_set_pitchyaw:"
+
+    try:
+        # Format the GIMBAL_MANAGER_SET_PITCHYAW message
+        gimbal_data = GIMBAL_MANAGER_SET_PITCHYAW_TEMPLATE.format(
+            sysid=sysid,
+            component_id=MAV_COMP_ID_ONBOARD_COMPUTER,
+            target_system=target_system,
+            target_component=target_component,
+            flags=flags,
+            gimbal_device_id=gimbal_device_id,
+            pitch=pitch,
+            yaw=yaw,
+            pitch_rate=pitch_rate,
+            yaw_rate=yaw_rate
+        )
+
+        # Send message via MAV2Rest
+        url = f"{MAV2REST_ENDPOINT}/mavlink"
+        response = post_to_mav2rest(url, gimbal_data)
+
+        if response is not None:
+            logger.debug(f"{logging_prefix_str} GIMBAL_MANAGER_SET_PITCHYAW sent with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER} pitch={pitch:.4f} yaw={yaw:.4f}")
+            return {
+                "success": True,
+                "message": f"GIMBAL_MANAGER_SET_PITCHYAW message sent successfully with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER}",
+                "pitch": pitch,
+                "yaw": yaw,
+                "pitch_rate": pitch_rate,
+                "yaw_rate": yaw_rate,
+                "target_system": target_system,
+                "target_component": target_component,
+                "response": response
+            }
+        else:
+            logger.error(f"{logging_prefix_str} failed to send GIMBAL_MANAGER_SET_PITCHYAW")
+            return {
+                "success": False,
+                "message": "MAV2Rest returned no response",
+                "network_error": True
+            }
+
+    except Exception as e:
+        logger.error(f"{logging_prefix_str} unexpected error {str(e)}")
+        return {
+            "success": False,
+            "message": f"Unexpected error: {str(e)}",
+            "unexpected_error": True
+        }
+
+
+# Send CAMERA_INFORMATION MAVLink message
+def send_camera_information(sysid: int,
+                            vendor_name: str,
+                            model_name: str,
+                            firmware_version: int,
+                            focal_length: float,
+                            sensor_size_h: float,
+                            sensor_size_v: float,
+                            resolution_h: int,
+                            resolution_v: int,
+                            lens_id: int = 0,
+                            flags: int = 0,
+                            cam_definition_version: int = 0,
+                            cam_definition_uri: str = "") -> Dict[str, Any]:
+    """
+    Send CAMERA_INFORMATION MAVLink message
+
+    Args:
+        sysid: System ID to send message from (normally 1)
+        vendor_name: Camera vendor name (up to 32 characters)
+        model_name: Camera model name (up to 32 characters)
+        firmware_version: Camera firmware version (32 bit value)
+        focal_length: Focal length in millimeters
+        sensor_size_h: Horizontal sensor size in millimeters
+        sensor_size_v: Vertical sensor size in millimeters
+        resolution_h: Horizontal image resolution in pixels
+        resolution_v: Vertical image resolution in pixels
+        lens_id: Reserved for a lens ID (0 for default)
+        flags: Camera capability flags (0 for default)
+        cam_definition_version: Camera definition version (0 for default)
+        cam_definition_uri: Camera definition URI (empty string for default)
+
+    Returns:
+        Dictionary with send results
+    """
+
+    # logging prefix for all messages from this function
+    logging_prefix_str = "send_camera_information:"
+
+    try:
+        # Get current time in milliseconds since boot
+        time_boot_ms = int(time.time() * 1000)
+
+        # Truncate strings to MAVLink limits
+        vendor_name = vendor_name[:32] if len(vendor_name) > 32 else vendor_name
+        model_name = model_name[:32] if len(model_name) > 32 else model_name
+        cam_definition_uri = cam_definition_uri[:140] if len(cam_definition_uri) > 140 else cam_definition_uri
+
+        # Convert strings to byte arrays for MAVLink
+        vendor_name_bytes = json.dumps(list(vendor_name.encode('utf-8').ljust(32, b'\x00')))
+        model_name_bytes = json.dumps(list(model_name.encode('utf-8').ljust(32, b'\x00')))
+
+        # Format the CAMERA_INFORMATION message
+        camera_info_data = CAMERA_INFORMATION_TEMPLATE.format(
+            sysid=sysid,
+            component_id=MAV_COMP_ID_ONBOARD_COMPUTER,
+            time_boot_ms=time_boot_ms,
+            vendor_name=vendor_name_bytes,
+            model_name=model_name_bytes,
+            firmware_version=firmware_version,
+            focal_length=focal_length,
+            sensor_size_h=sensor_size_h,
+            sensor_size_v=sensor_size_v,
+            resolution_h=resolution_h,
+            resolution_v=resolution_v,
+            lens_id=lens_id,
+            flags=flags,
+            cam_definition_version=cam_definition_version,
+            cam_definition_uri=cam_definition_uri
+        )
+
+        # Send message via MAV2Rest
+        url = f"{MAV2REST_ENDPOINT}/mavlink"
+        response = post_to_mav2rest(url, camera_info_data)
+
+        if response is not None:
+            logger.debug(f"{logging_prefix_str} CAMERA_INFORMATION sent with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER} vendor={vendor_name} model={model_name}")
+            return {
+                "success": True,
+                "message": f"CAMERA_INFORMATION message sent successfully with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER}",
+                "vendor_name": vendor_name,
+                "model_name": model_name,
+                "resolution": f"{resolution_h}x{resolution_v}",
+                "focal_length": focal_length,
+                "response": response
+            }
+        else:
+            logger.error(f"{logging_prefix_str} failed to send CAMERA_INFORMATION")
+            return {
+                "success": False,
+                "message": "MAV2Rest returned no response",
+                "network_error": True
+            }
+
+    except Exception as e:
+        logger.error(f"{logging_prefix_str} unexpected error {str(e)}")
+        return {
+            "success": False,
+            "message": f"Unexpected error: {str(e)}",
+            "unexpected_error": True
+        }
+
+
+# Send CAMERA_TRACKING_IMAGE_STATUS MAVLink message
+def send_camera_tracking_image_status(sysid: int,
+                                      tracking_status: str,
+                                      tracking_mode: str,
+                                      target_data: str,
+                                      point_x: float,
+                                      point_y: float,
+                                      radius: float,
+                                      rec_top_x: float,
+                                      rec_top_y: float,
+                                      rec_bottom_x: float,
+                                      rec_bottom_y: float) -> Dict[str, Any]:
+    """
+    Send CAMERA_TRACKING_IMAGE_STATUS MAVLink message
+
+    Args:
+        sysid: System ID to send message from (normally 1)
+        tracking_status: Current tracking status (e.g., "CAMERA_TRACKING_STATUS_FLAGS_IDLE")
+        tracking_mode: Current tracking mode (e.g., "CAMERA_TRACKING_MODE_NONE")
+        target_data: Target data type (e.g., "CAMERA_TRACKING_TARGET_DATA_NONE")
+        point_x: Current tracked point x value (normalized 0..1, 0 is left, 1 is right)
+        point_y: Current tracked point y value (normalized 0..1, 0 is top, 1 is bottom)
+        radius: Current tracked radius (normalized 0..1, 0 is image left, 1 is image right)
+        rec_top_x: Current tracked rectangle top x value (normalized 0..1)
+        rec_top_y: Current tracked rectangle top y value (normalized 0..1)
+        rec_bottom_x: Current tracked rectangle bottom x value (normalized 0..1)
+        rec_bottom_y: Current tracked rectangle bottom y value (normalized 0..1)
+
+    Returns:
+        Dictionary with send results
+    """
+
+    # logging prefix for all messages from this function
+    logging_prefix_str = "send_camera_tracking_image_status:"
+
+    try:
+        # Format the CAMERA_TRACKING_IMAGE_STATUS message
+        tracking_data = CAMERA_TRACKING_IMAGE_STATUS_TEMPLATE.format(
+            sysid=sysid,
+            component_id=MAV_COMP_ID_ONBOARD_COMPUTER,
+            tracking_status=tracking_status,
+            tracking_mode=tracking_mode,
+            target_data=target_data,
+            point_x=point_x,
+            point_y=point_y,
+            radius=radius,
+            rec_top_x=rec_top_x,
+            rec_top_y=rec_top_y,
+            rec_bottom_x=rec_bottom_x,
+            rec_bottom_y=rec_bottom_y
+        )
+
+        # Send message via MAV2Rest
+        url = f"{MAV2REST_ENDPOINT}/mavlink"
+        response = post_to_mav2rest(url, tracking_data)
+
+        if response is not None:
+            logger.debug(f"{logging_prefix_str} CAMERA_TRACKING_IMAGE_STATUS sent with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER} status={tracking_status} point=({point_x:.3f},{point_y:.3f})")
+            return {
+                "success": True,
+                "message": f"CAMERA_TRACKING_IMAGE_STATUS message sent successfully with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER}",
+                "tracking_status": tracking_status,
+                "tracking_mode": tracking_mode,
+                "target_data": target_data,
+                "point_x": point_x,
+                "point_y": point_y,
+                "radius": radius,
+                "response": response
+            }
+        else:
+            logger.error(f"{logging_prefix_str} failed to send CAMERA_TRACKING_IMAGE_STATUS")
             return {
                 "success": False,
                 "message": "MAV2Rest returned no response",

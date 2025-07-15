@@ -29,7 +29,7 @@ from typing import Dict, Any
 from app import settings
 from app import image_capture
 from app import mavlink_interface
-from app import optflow_lkt
+from app import tracking
 
 # Configure console logging
 console_handler = logging.StreamHandler(sys.stdout)
@@ -234,7 +234,7 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
 
                     # Perform visual follow calculation
                     optflow_start_time = time.time()
-                    opticalflow_result = optflow_lkt.get_optical_flow(frame, last_frame_capture_time, False)
+                    opticalflow_result = tracking.get_optical_flow(frame, last_frame_capture_time, False)
                     optflow_calc_time = time.time() - optflow_start_time
 
                     # calculate hfov
@@ -360,7 +360,7 @@ def test_rtsp_connection(rtsp_url: str, camera_type: str) -> Dict[str, Any]:
         height = frame_result["height"]
 
         # Test optical flow calculation
-        opticalflow_result = optflow_lkt.get_optical_flow(frame, time.time(), True)  # Include augmented image
+        opticalflow_result = tracking.get_optical_flow(frame, time.time(), True)  # Include augmented image
 
         # Encode frame as base64 (use augmented image if available)
         if opticalflow_result.get("success") and opticalflow_result.get("image_base64"):
@@ -445,7 +445,7 @@ def angle_between_quaternions(q1, q2):
 # Optical Flow API Endpoints
 
 # Get the list of available camera configs (RTSP and FOV)
-@app.get("/opticalflow/camera-configs")
+@app.get("/visual-follow/camera-configs")
 async def get_camera_configs() -> Dict[str, Any]:
     """Return the list of available camera configs (RTSP and FOV)"""
     logger.debug("Getting camera configs")
@@ -460,7 +460,7 @@ async def get_camera_configs() -> Dict[str, Any]:
 
 
 # Load opticalflow settings
-@app.post("/opticalflow/get-settings")
+@app.post("/visual-follow/get-settings")
 async def get_opticalflow_settings() -> Dict[str, Any]:
     """Get saved camera settings"""
     logger.debug("Getting opticalflow settings")
@@ -502,7 +502,7 @@ async def get_opticalflow_settings() -> Dict[str, Any]:
 
 
 # Save opticalflow settings
-@app.post("/opticalflow/save-settings")
+@app.post("/visual-follow/save-settings")
 async def save_opticalflow_settings(
     type: str = Query(...),
     rtsp: str = Query(...),
@@ -532,7 +532,7 @@ async def save_opticalflow_settings(
 
 
 # Get opticalflow enabled state
-@app.get("/opticalflow/get-enabled-state")
+@app.get("/visual-follow/get-enabled-state")
 async def get_visualfollow_enabled_state() -> Dict[str, Any]:
     """Get saved opticalflow enabled state (supports both GET and POST)"""
     logger.debug("Getting opticalflow enabled state")
@@ -549,7 +549,7 @@ async def get_visualfollow_enabled_state() -> Dict[str, Any]:
 
 
 # Save opticalflow enabled state
-@app.post("/opticalflow/save-enabled-state")
+@app.post("/visual-follow/save-enabled-state")
 async def save_opticalflow_enabled_state(enabled: bool = Query(...)) -> Dict[str, Any]:
     """Save opticalflow enabled state to persistent storage (using query parameter)"""
     logger.info(f"Optical flow enabled state: {enabled}")
@@ -562,7 +562,7 @@ async def save_opticalflow_enabled_state(enabled: bool = Query(...)) -> Dict[str
 
 
 # Test image retrieval from the RTSP stream and optical flow calculation
-@app.post("/opticalflow/test")
+@app.post("/visual-follow/test")
 async def test_opticalflow(type: str = Query(...), rtsp: str = Query(...)) -> Dict[str, Any]:
     """Test opticalflow functionality with RTSP connection"""
     logger.info(f"Testing with camera_type={type}, rtsp={rtsp}")
@@ -601,7 +601,7 @@ async def test_opticalflow(type: str = Query(...), rtsp: str = Query(...)) -> Di
 
 
 # Get opticalflow running status
-@app.get("/opticalflow/status")
+@app.get("/visual-follow/status")
 async def get_opticalflow_status() -> Dict[str, Any]:
     """Get opticalflow running status"""
     logger.debug("Getting opticalflow status")
@@ -618,7 +618,7 @@ async def get_opticalflow_status() -> Dict[str, Any]:
 
 
 # Start opticalflow (this is called by the frontend's "Run" button)
-@app.post("/opticalflow/start")
+@app.post("/visual-follow/start")
 async def start_opticalflow(type: str = Query(...), rtsp: str = Query(...)) -> Dict[str, Any]:
     """Start opticalflow"""
     logger.info(f"Start opticalflow request received for type={type}, rtsp={rtsp}")
@@ -651,7 +651,7 @@ async def start_opticalflow(type: str = Query(...), rtsp: str = Query(...)) -> D
 
 
 # Stop opticalflow (this is called by the frontend's "Stop" button)
-@app.post("/opticalflow/stop")
+@app.post("/visual-follow/stop")
 async def stop_opticalflow() -> Dict[str, Any]:
     """Stop opticalflow"""
     global visualfollow_running
