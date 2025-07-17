@@ -1,7 +1,7 @@
 {
-    "name": "OpticalFlow",
-    "description": "BlueOS Extension to support visually follow using an ethernet enabled camera gimbal.",
-    "icon": "mdi-waves-arrow-right",
+    "name": "VisualFollow",
+    "description": "BlueOS Extension to support visual follow using an ethernet enabled camera gimbal.",
+    "icon": "mdi-eye-outline",
     "company": "ArduPilot",
     "version": "0.0.1",
     "new_page": false,

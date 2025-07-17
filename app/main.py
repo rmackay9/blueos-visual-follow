@@ -63,7 +63,7 @@ visualfollow_running = False  # True if visual follow is currently running
 gimbal_down_q = [0.7071, 0, -0.7071, 0]  # Quaternion used to check for downward facing gimbal
 
 # log that the backend has started
-logger.info("Optical flow backend started")
+logger.info("Visual Follow backend started")
 
 
 # Auto-start visual follow if it was previously enabled
@@ -298,12 +298,12 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
 
     except Exception as e:
         logger.error(f"{logging_prefix_str} error {str(e)}")
-        mavlink_interface.send_statustext_msg(target_system_id, "OpticalFlow: error")
+        mavlink_interface.send_statustext_msg(target_system_id, "VisualFollow: error")
     finally:
         # Clean up video capture when stopping
         image_capture.cleanup_video_capture()
         visualfollow_running = False
-        mavlink_interface.send_statustext_msg(target_system_id, "OpticalFlow: stopped")
+        mavlink_interface.send_statustext_msg(target_system_id, "VisualFollow: stopped")
         logger.info(f"{logging_prefix_str} stopped")
 
 

@@ -443,7 +443,7 @@
                         .then(response => response.json())
                         .then(data => {
                             if (data.success) {
-                                progressLog.value += "Optical flow started successfully\n";
+                                progressLog.value += "Visual follow started successfully\n";
                                 runBtn.textContent = "Stop";
                                 runBtn.className = "btn btn-danger";
                                 // Save the enabled state
@@ -474,7 +474,7 @@
                         .then(response => response.json())
                         .then(data => {
                             if (data.success) {
-                                progressLog.value += "Optical flow stopped\n";
+                                progressLog.value += "Visual follow stopped\n";
                                 runBtn.textContent = "Run";
                                 runBtn.className = "btn btn-success";
                                 // Save the disabled state
@@ -498,7 +498,7 @@
                         .then(data => {
                             if (data.success) {
                                 if (data.enabled) {
-                                    // Optical flow should be enabled, check if it's actually running
+                                    // Visual follow should be enabled, check if it's actually running
                                     fetch('/visual-follow/status', { method: 'GET' })
                                         .then(response => response.json())
                                         .then(statusData => {
@@ -509,7 +509,7 @@
                                                 // failed to start, print error message and restore Run button
                                                 runBtn.textContent = "Run";
                                                 runBtn.className = "btn btn-success";
-                                                progressLog.value += "Optical flow was enabled but failed to start automatically\n";
+                                                progressLog.value += "Visual follow was enabled but failed to start automatically\n";
                                                 progressLog.scrollTop = progressLog.scrollHeight;
                                             }
                                         })
@@ -517,7 +517,7 @@
                                             console.error('Error checking visual follow runtime status:', error);
                                         });
                                 } else {
-                                    // Optical flow should be disabled
+                                    // Visual follow should be disabled
                                     runBtn.textContent = "Run";
                                     runBtn.className = "btn btn-success";
                                 }
@@ -553,7 +553,7 @@
                         .then(response => response.json())
                         .then(data => {
                             if (data.success) {
-                                console.log(`Optical flow state saved: ${enabled}`);
+                                console.log(`Visual follow state saved: ${enabled}`);
                             } else {
                                 console.error('Failed to save visual follow state:', data.message);
                             }
