@@ -101,6 +101,9 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
     # logging prefix for all messages from this function
     logging_prefix_str = "visual-follow:"
 
+    # Initialize target_system_id with default value in case of early exceptions
+    target_system_id = 1
+
     try:
         logger.info(f"{logging_prefix_str} started")
         visualfollow_running = True
@@ -414,7 +417,7 @@ def angle_between_quaternions(q1, q2):
     return 2 * math.acos(dot)  # in radians
 
 
-# Optical Flow API Endpoints
+# Visual Follow API Endpoints
 
 # Get the list of available camera configs (RTSP and FOV)
 @app.get("/visual-follow/camera-configs")
