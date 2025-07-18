@@ -18,17 +18,116 @@ logger = logging.getLogger("visual-follow")
 
 # local variables
 tracker = None    # OpenCV TrackerCSRT instance
-image_roi = None  # region of interest for tracking
+image_roi_norm = False  # normalised bounding box expressed as a tuple of 4 values in range 0 to 1.  (top_left_x, top_left_y, bottom_right_x, bottom_right_y)
+image_roi = None  # roi bounding box expressed as a tuple with 4 integer values in pixels: (x, y, width, height)
+                  # x: Left edge of the bounding box (in pixels)
+                  # y: Top edge of the bounding box (in pixels)
+                  # width: Width of the bounding box (in pixels)
+                  # height: Height of the bounding box (in pixels)
 
 
-# Run tracking algorithm on the provided image using OpenCV's TrackerCSRT
-def get_tracking(curr_image: np.ndarray, roi, include_augmented_image: bool) -> Dict[str, Any]:
+# Set tracking point using normalised coordinates
+#     accepts a tuple with 3 values: (x, y, radius)
+#     x : 0 ~ 1 where 0 is left an 1 is right
+#     y : 0 ~ 1 where 0 is top and 1 is bottom
+#     radius: 0 ~ 1, 0 is 1 pixel, 1 is full image size
+def set_point_normalised(roi: tuple):
+    """
+    set_point_normalised
+
+    Set tracking target using normalised coordinates
+    """
+    global image_roi_norm, image_roi
+
+    # validate ROI is a tuple with 3 values in 0 to 1 range named "x", "y", "radius"
+    if not isinstance(roi, tuple) or len(roi) != 3:
+        logger.error(f"set_point_normalised: Invalid ROI format: {roi}. Expected tuple with 3 values (x, y, radius)")
+        return
+
+    # extract x, y and radius from the tuple
+    x, y, radius = roi
+
+    # Validate that all values are numbers and in the range 0 to 1
+    if not all(isinstance(val, (int, float)) for val in [x, y, radius]):
+        logger.error(f"set_point_normalised: Invalid ROI values: {roi}. All values must be numbers")
+        return
+    if not (0 <= x <= 1 and 0 <= y <= 1 and 0 <= radius <= 1):
+        logger.error(f"set_point_normalised: Invalid ROI range: {roi}. All values must be in range 0 to 1")
+        return
+
+    # Convert point + radius to normalized rectangle coordinates
+    # Calculate bounding box around the point
+    half_radius = radius / 2
+    top_left_x = max(0, x - half_radius)
+    top_left_y = max(0, y - half_radius)
+    bottom_right_x = min(1, x + half_radius)
+    bottom_right_y = min(1, y + half_radius)
+
+    # record ROI as normalized rectangle (top_left_x, top_left_y, bottom_right_x, bottom_right_y)
+    image_roi_norm = (top_left_x, top_left_y, bottom_right_x, bottom_right_y)
+    image_roi = None
+    logger.info(f"set_point_normalised: ROI set to normalized rectangle: {image_roi_norm}")
+    logger.debug(f"set_point_normalised: Original point ({x:.3f}, {y:.3f}) with radius {radius:.3f}")
+
+
+# Set tracking rectangle using normalised coordinates
+#     accepts a tuple with 4 values: (top_left_x, top_left_y, bottom_right_x, bottom_right_y)
+#     all values: 0 ~ 1 where 0 is left/top and 1 is right/bottom
+def set_rectangle_normalised(roi: tuple):
+    """
+    set_rectangle_normalised
+
+    Set tracking target using normalised rectangle coordinates
+    """
+    global image_roi_norm
+
+    # validate ROI is a tuple with 4 values in 0 to 1 range
+    if not isinstance(roi, tuple) or len(roi) != 4:
+        logger.error(f"set_rectangle_normalised: Invalid ROI format: {roi}. Expected tuple with 4 values (top_left_x, top_left_y, bottom_right_x, bottom_right_y)")
+        return
+
+    # extract top_left_x, top_left_y, bottom_right_x, bottom_right_y from the tuple
+    top_left_x, top_left_y, bottom_right_x, bottom_right_y = roi
+
+    # Validate that all values are numbers and in the range 0 to 1
+    if not all(isinstance(val, (int, float)) for val in [top_left_x, top_left_y, bottom_right_x, bottom_right_y]):
+        logger.error(f"set_rectangle_normalised: Invalid ROI values: {roi}. All values must be numbers")
+        return
+    if not (0 <= top_left_x <= 1 and 0 <= top_left_y <= 1 and 0 <= bottom_right_x <= 1 and 0 <= bottom_right_y <= 1):
+        logger.error(f"set_rectangle_normalised: Invalid ROI range: {roi}. All values must be in range 0 to 1")
+        return
+
+    # Validate that the rectangle is valid (top-left must be less than bottom-right)
+    if top_left_x >= bottom_right_x or top_left_y >= bottom_right_y:
+        logger.error(f"set_rectangle_normalised: Invalid rectangle: {roi}. Top-left must be less than bottom-right")
+        return
+
+    # record ROI as normalized rectangle (top_left_x, top_left_y, bottom_right_x, bottom_right_y)
+    image_roi_norm = (top_left_x, top_left_y, bottom_right_x, bottom_right_y)
+    image_roi = None
+    logger.info(f"set_rectangle_normalised: ROI set to normalized rectangle: {image_roi_norm}")
+
+
+# Clear ROI
+def clear_roi():
+    """
+    Clear ROI
+    
+    This function should be called to stop tracking a target
+    """
+    global image_roi_norm, image_roi
+    image_roi_norm = None
+    image_roi = None
+    logger.info(f"clear_roi: ROI cleared")
+
+
+# Run tracking algorithm on new image using OpenCV's TrackerCSRT
+def get_tracking(image: np.ndarray, include_augmented_image: bool) -> Dict[str, Any]:
     """
     Run tracking algorithm on the provided image using OpenCV's TrackerCSRT
 
     Args:
         image: Input image as numpy array (BGR format from OpenCV)
-        roi: region of interest to track, if none then any pre-existing region will be used
         include_augmented_image: if true an augmented image with a rectangle drawn around the target should be returned to the caller
 
     Returns:
@@ -47,7 +146,7 @@ def get_tracking(curr_image: np.ndarray, roi, include_augmented_image: bool) -> 
     # logging prefix for all messages from this function
     logging_prefix_str = "get_tracking:"
 
-    global tracker, image_roi
+    global tracker
 
     try:
         # create tracker if not already created
@@ -55,29 +154,9 @@ def get_tracking(curr_image: np.ndarray, roi, include_augmented_image: bool) -> 
             tracker = cv2.TrackerCSRT_create()
             logger.info(f"{logging_prefix_str} Created new TrackerCSRT instance")
 
-        # update ROI if provided
-        if roi is not None:
-            image_roi = roi
-            # Initialize tracker with new ROI
-            tracker = cv2.TrackerCSRT_create()
-            success = tracker.init(curr_image, tuple(roi))
-            if not success:
-                logger.warning(f"{logging_prefix_str} Failed to initialize tracker with ROI")
-                return {
-                    "success": False,
-                    "center_x": None,
-                    "center_y": None,
-                    "box_x": None,
-                    "box_y": None,
-                    "box_width": None,
-                    "box_height": None,
-                    "message": "Failed to initialize tracker with ROI",
-                    "image_base64": None
-                }
-
-        # fail immediately if no tracker or ROI
-        if tracker is None or image_roi is None:
-            logger.warning(f"{logging_prefix_str} Tracking failed - no tracker or ROI")
+        # exit immediately if no roi
+        if image_roi_norm is None:
+            logger.debug(f"{logging_prefix_str} ROI not defined")
             return {
                 "success": False,
                 "center_x": None,
@@ -86,12 +165,30 @@ def get_tracking(curr_image: np.ndarray, roi, include_augmented_image: bool) -> 
                 "box_y": None,
                 "box_width": None,
                 "box_height": None,
-                "message": "Tracking failed, no tracker or ROI",
+                "message": "ROI not defined",
                 "image_base64": None
             }
 
-        # run tracking
-        success, box = tracker.update(curr_image)
+        # get image dimensions
+        image_height, image_width = image.shape[:2]
+
+        # update image_roi from image_roi_norm if necessary
+        if image_roi is None:
+            # Rectangle format: (top_left_x, top_left_y, bottom_right_x, bottom_right_y)
+            top_left_x, top_left_y, bottom_right_x, bottom_right_y = image_roi_norm
+
+            # Convert to pixel coordinates
+            x = int(top_left_x * image_width)
+            y = int(top_left_y * image_height)
+            width = int((bottom_right_x - top_left_x) * image_width)
+            height = int((bottom_right_y - top_left_y) * image_height)
+
+            # save to image_roi and send to tracker
+            image_roi = (x, y, width, height)
+            tracker.init(image, image_roi)
+
+        # run tracking algorithm
+        success, box = tracker.update(image)
         if not success:
             logger.warning(f"{logging_prefix_str} Tracking failed")
             return {
@@ -106,28 +203,26 @@ def get_tracking(curr_image: np.ndarray, roi, include_augmented_image: bool) -> 
                 "image_base64": None
             }
 
+        # tracking successful, process returned bounding box
         # calculate center of the bounding box
         (box_x, box_y, box_width, box_height) = [int(v) for v in box]
         center_x = box_x + (box_width // 2)
         center_y = box_y + (box_height // 2)
 
-        # get image dimensions for normalization
-        h_orig, w_orig = curr_image.shape[:2]
-
         # normalize coordinates to -1 to +1 range
-        norm_center_x = (center_x / w_orig) * 2 - 1  # -1 (left) to +1 (right)
-        norm_center_y = (center_y / h_orig) * 2 - 1  # -1 (top) to +1 (bottom)
-        norm_box_x = (box_x / w_orig) * 2 - 1
-        norm_box_y = (box_y / h_orig) * 2 - 1
-        norm_box_width = (box_width / w_orig) * 2
-        norm_box_height = (box_height / h_orig) * 2
+        norm_center_x = (center_x / image_width) * 2 - 1  # -1 (left) to +1 (right)
+        norm_center_y = (center_y / image_height) * 2 - 1  # -1 (top) to +1 (bottom)
+        norm_box_x = (box_x / image_width) * 2 - 1
+        norm_box_y = (box_y / image_height) * 2 - 1
+        norm_box_width = (box_width / image_width) * 2
+        norm_box_height = (box_height / image_height) * 2
 
         # Create augmented image
         image_base64 = None
         if include_augmented_image:
             try:
                 # Create a copy of the original image for visualization
-                augmented_image = curr_image.copy()
+                augmented_image = image.copy()
 
                 # Draw the tracking bounding box
                 cv2.rectangle(augmented_image, (box_x, box_y), 
@@ -184,24 +279,6 @@ def get_tracking(curr_image: np.ndarray, roi, include_augmented_image: bool) -> 
         }
 
 
-# Reset the tracker instance and clear the ROI
-def reset_tracker():
-    """
-    Reset the tracker instance and clear the ROI
-    
-    This function should be called when tracking needs to be restarted
-    or when switching between different targets
-    """
-    global tracker, image_roi
-    
-    # logging prefix for all messages from this function
-    logging_prefix_str = "reset_tracker:"
-    
-    tracker = None
-    image_roi = None
-    logger.info(f"{logging_prefix_str} Tracker reset successfully")
-
-
 # Initialize the tracker with a specific ROI
 def initialize_tracker(image: np.ndarray, roi: tuple) -> Dict[str, Any]:
     """
@@ -218,11 +295,15 @@ def initialize_tracker(image: np.ndarray, roi: tuple) -> Dict[str, Any]:
     
     # logging prefix for all messages from this function
     logging_prefix_str = "initialize_tracker:"
-    
+
+    # exit immediately if tracker is None
+    if tracker is None:
+        return {
+            "success": False,
+            "message": "Tracker not initialised"
+        }
+
     try:
-        # Create new tracker instance
-        tracker = cv2.TrackerCSRT_create()
-        
         # Initialize tracker with ROI
         success = tracker.init(image, roi)
         
@@ -250,3 +331,49 @@ def initialize_tracker(image: np.ndarray, roi: tuple) -> Dict[str, Any]:
             "success": False,
             "message": f"Error initializing tracker: {str(e)}"
         }
+
+
+# Check and initialize tracking from normalized ROI
+def check_and_initialize_from_normalized_roi(image: np.ndarray) -> Dict[str, Any]:
+    """
+    Check if there's a normalized ROI set and initialize tracking if needed
+    
+    Args:
+        image: Current image frame
+        
+    Returns:
+        Dictionary with initialization result
+    """
+    global image_roi_norm, image_roi, tracker
+    
+    # If there's no normalized ROI or tracker is already initialized, return early
+    if not image_roi_norm or image_roi is not None:
+        return {"success": False, "message": "No normalized ROI set or tracker already initialized"}
+    
+    # Convert normalized coordinates to pixel coordinates
+    image_height, image_width = image.shape[:2]
+    
+    if len(image_roi_norm) == 4:
+        # Rectangle format: (top_left_x, top_left_y, bottom_right_x, bottom_right_y)
+        top_left_x, top_left_y, bottom_right_x, bottom_right_y = image_roi_norm
+        
+        # Convert to pixel coordinates
+        x = int(top_left_x * image_width)
+        y = int(top_left_y * image_height)
+        width = int((bottom_right_x - top_left_x) * image_width)
+        height = int((bottom_right_y - top_left_y) * image_height)
+        
+        roi = (x, y, width, height)
+        
+        # Initialize tracker
+        result = initialize_tracker(image, roi)
+        
+        if result["success"]:
+            # Clear the normalized ROI since we've used it
+            image_roi_norm = False
+            logger.info(f"check_and_initialize_from_normalized_roi: Initialized tracker with normalized ROI: {roi}")
+        
+        return result
+    else:
+        logger.error(f"check_and_initialize_from_normalized_roi: Invalid normalized ROI format: {image_roi_norm}")
+        return {"success": False, "message": "Invalid normalized ROI format"}

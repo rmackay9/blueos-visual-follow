@@ -293,7 +293,7 @@ def send_gimbal_manager_set_pitchyaw(sysid: int,
         response = post_to_mav2rest(url, gimbal_data)
 
         if response is not None:
-            logger.debug(f"{logging_prefix_str} MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW sent with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER} pitch={pitch:.4f} yaw={yaw:.4f}")
+            logger.debug(f"{logging_prefix_str} MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW sent with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER} pitch={pitch_rad:.4f} yaw={yaw_rad:.4f}")
             return {
                 "success": True,
                 "message": f"MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW command sent successfully with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER}",
@@ -702,4 +702,219 @@ def send_set_message_interval(sysid: int,  # target system id
             "success": False,
             "message": f"Unexpected error: {str(e)}",
             "unexpected_error": True
+        }
+
+
+# Function to retrieve and parse camera tracking commands
+def get_camera_tracking_commands(sysid: int) -> Dict[str, Any]:
+    """
+    Retrieve camera tracking commands (MAV_CMD_CAMERA_TRACK_POINT, MAV_CMD_CAMERA_TRACK_RECTANGLE)
+    from MAV2Rest by polling for COMMAND_LONG messages targeted at our component
+
+    Args:
+        sysid: mavlink system id of receiver
+
+    Returns:
+        Dictionary containing these fields:
+        "success": True if command found, False otherwise
+        "command": "TRACK_POINT", "TRACK_RECTANGLE" or None
+        if TRACK_POINT:
+            "point_x": x position (0..1, 0 is left, 1 is right)
+            "point_y": y position (0..1, 0 is top, 1 is bottom)
+            "radius": radius (0 = 1 pixel, 1 = full image width)
+        if TRACK_RECTANGLE:
+            "top_left_x": bounding box top left x position (0..1, 0 is left, 1 is right)
+            "top_left_y": bounding box top left y position (0..1, 0 is top, 1 is bottom)
+            "bottom_right_x": bounding box bottom right x position (0..1, 0 is left, 1 is right)
+            "bottom_right_y": bounding box bottom right y position (0..1, 0 is top, 1 is bottom)
+        "message": status message including error on failure
+    """
+
+    # logging prefix for all messages from this function
+    logging_prefix_str = "get_camera_tracking_commands:"
+
+    try:
+        # Request the latest COMMAND_LONG messages for our component
+        component_id = MAV_COMP_ID_ONBOARD_COMPUTER  # Use onboard computer component ID
+        url = f"{MAV2REST_ENDPOINT}/mavlink/vehicles/{sysid}/components/{component_id}/messages/COMMAND_LONG"
+        req = urllib.request.Request(url)
+        req.add_header("Content-Type", "application/json")
+
+        with urllib.request.urlopen(req, timeout=5) as response:
+            if response.getcode() == 200:
+                response_data = response.read().decode()
+                data = json.loads(response_data)
+
+                # Extract command information from the message
+                if "message" in data:
+                    msg = data["message"]
+                    command_type = msg.get("command", {}).get("type", "")
+
+                    # Check if this is a camera tracking command
+                    if command_type == "MAV_CMD_CAMERA_TRACK_POINT":
+                        # Extract point tracking parameters
+                        point_x = msg.get("param1", 0.0)  # Point x position (0..1, 0 is left, 1 is right)
+                        point_y = msg.get("param2", 0.0)  # Point y position (0..1, 0 is top, 1 is bottom)
+                        radius = msg.get("param3", 0.0)   # Point radius (0..1)
+                        
+                        logger.info(f"{logging_prefix_str} Received MAV_CMD_CAMERA_TRACK_POINT: point=({point_x:.3f}, {point_y:.3f}), radius={radius:.3f}")
+                        
+                        # Set the tracking point using the normalized coordinates
+                        from tracking import set_point_normalised
+                        set_point_normalised((point_x, point_y, radius))
+                        
+                        return {
+                            "success": True,
+                            "command": "TRACK_POINT",
+                            "point_x": point_x,
+                            "point_y": point_y,
+                            "radius": radius,
+                            "message": f"Track point command received: ({point_x:.3f}, {point_y:.3f})"
+                        }
+                        
+                    elif command_type == "MAV_CMD_CAMERA_TRACK_RECTANGLE":
+                        # Extract rectangle tracking parameters
+                        top_left_x = msg.get("param1", 0.0)     # Top left corner x (0..1)
+                        top_left_y = msg.get("param2", 0.0)     # Top left corner y (0..1)
+                        bottom_right_x = msg.get("param3", 0.0) # Bottom right corner x (0..1)
+                        bottom_right_y = msg.get("param4", 0.0) # Bottom right corner y (0..1)
+                        
+                        logger.info(f"{logging_prefix_str} Received MAV_CMD_CAMERA_TRACK_RECTANGLE: "
+                                    f"top_left=({top_left_x:.3f}, {top_left_y:.3f}), "
+                                    f"bottom_right=({bottom_right_x:.3f}, {bottom_right_y:.3f})")
+                        
+                        # Set the tracking rectangle using the normalized coordinates
+                        from tracking import set_rectangle_normalised
+                        set_rectangle_normalised((top_left_x, top_left_y, bottom_right_x, bottom_right_y))
+                        
+                        return {
+                            "success": True,
+                            "command": "TRACK_RECTANGLE",
+                            "top_left_x": top_left_x,
+                            "top_left_y": top_left_y,
+                            "bottom_right_x": bottom_right_x,
+                            "bottom_right_y": bottom_right_y,
+                            "message": f"Track rectangle command received: ({top_left_x:.3f}, {top_left_y:.3f}) to ({bottom_right_x:.3f}, {bottom_right_y:.3f})"
+                        }
+                    else:
+                        # Not a camera tracking command, return no command found
+                        return {
+                            "success": False,
+                            "command": None,
+                            "message": "No camera tracking commands found"
+                        }
+                else:
+                    return {
+                        "success": False,
+                        "command": None,
+                        "message": "Invalid command message format"
+                    }
+            else:
+                return {
+                    "success": False,
+                    "command": None,
+                    "message": f"HTTP error {response.getcode()}"
+                }
+
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            # No commands available - this is normal
+            return {
+                "success": False,
+                "command": None,
+                "message": "No commands available"
+            }
+        else:
+            logger.error(f"{logging_prefix_str} HTTP error {e.code}: {e.reason}")
+            return {
+                "success": False,
+                "command": None,
+                "message": f"HTTP error {e.code}: {e.reason}"
+            }
+    except Exception as e:
+        logger.error(f"{logging_prefix_str} Error retrieving commands: {str(e)}")
+        return {
+            "success": False,
+            "command": None,
+            "message": f"Error: {str(e)}"
+        }
+
+
+def send_command_ack(sysid: int, command: str, result: str = "MAV_RESULT_ACCEPTED") -> Dict[str, Any]:
+    """
+    Send COMMAND_ACK message to acknowledge receipt of a camera tracking command
+
+    Args:
+        sysid: System ID to send acknowledgment to
+        command: Command type that was received
+        result: Result of command processing (MAV_RESULT_ACCEPTED, MAV_RESULT_DENIED, etc.)
+
+    Returns:
+        Dictionary with send results
+    """
+    
+    # logging prefix for all messages from this function
+    logging_prefix_str = "send_command_ack:"
+    
+    try:
+        # Map command names to MAVLink command IDs
+        command_ids = {
+            "MAV_CMD_CAMERA_TRACK_POINT": 2004,
+            "MAV_CMD_CAMERA_TRACK_RECTANGLE": 2005
+        }
+        
+        command_id = command_ids.get(command, 0)
+        
+        # COMMAND_ACK message template
+        command_ack_template = """{{
+          "header": {{
+            "system_id": {sysid},
+            "component_id": {component_id},
+            "sequence": 0
+          }},
+          "message": {{
+            "type": "COMMAND_ACK",
+            "command": {{
+              "type": "{command}"
+            }},
+            "result": {{
+              "type": "{result}"
+            }}
+          }}
+        }}"""
+        
+        # Format the COMMAND_ACK message
+        ack_data = command_ack_template.format(
+            sysid=sysid,
+            component_id=MAV_COMP_ID_ONBOARD_COMPUTER,
+            command=command,
+            result=result
+        )
+        
+        # Send message via MAV2Rest
+        url = f"{MAV2REST_ENDPOINT}/mavlink"
+        response = post_to_mav2rest(url, ack_data)
+        
+        if response is not None:
+            logger.debug(f"{logging_prefix_str} COMMAND_ACK sent for {command} with result {result}")
+            return {
+                "success": True,
+                "message": f"COMMAND_ACK sent for {command}",
+                "command": command,
+                "result": result
+            }
+        else:
+            logger.error(f"{logging_prefix_str} Failed to send COMMAND_ACK for {command}")
+            return {
+                "success": False,
+                "message": "Failed to send COMMAND_ACK",
+                "command": command
+            }
+    
+    except Exception as e:
+        logger.error(f"{logging_prefix_str} Error sending COMMAND_ACK: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error sending COMMAND_ACK: {str(e)}",
+            "command": command
         }

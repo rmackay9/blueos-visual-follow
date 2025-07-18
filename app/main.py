@@ -160,6 +160,11 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
                 # Start timing for the entire loop iteration
                 loop_start_time = time.time()
 
+                # check for tracking commands from user
+                command_start_time = time.time()
+                check_for_tracking_commands(target_system_id)
+                command_check_time = time.time() - command_start_time
+
                 # Capture frame from RTSP stream
                 frame_start_time = time.time()
                 frame_result = image_capture.capture_frame_from_stream(rtsp_url, last_frame_capture_time)
@@ -185,6 +190,11 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
                 # record success
                 last_frame_time = time.time()
                 frame_count += 1
+
+                # Get the captured frame for potential ROI processing
+                frame = frame_result["frame"]
+                width = frame_result["width"]
+                height = frame_result["height"]
 
                 # Check if we should use gimbal attitude and if gimbal is facing downward
                 # Defaults to sending target if gimbal attitude is unavailable
@@ -217,23 +227,19 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
 
                 tracking_time = 0.0
                 mavlink_send_time = 0.0
+                command_check_time = 0.0
 
                 if should_send_target:
-                    # Get the captured frame
-                    frame = frame_result["frame"]
-                    width = frame_result["width"]
-                    height = frame_result["height"]
-
                     # Perform visual follow calculation
                     tracking_start_time = time.time()
-                    tracking_result = tracking.get_tracking(frame, None, False)
+                    tracking_result = tracking.get_tracking(frame, False)
                     tracking_time = time.time() - tracking_start_time
 
                     if tracking_result.get("success"):
-                        # calculate hfov
+                        # calculate vfov
                         camera_vfov = calculate_vertical_fov(camera_hfov, width, height)
 
-                        # get center of tracked object and conver to pitch and yaw angles
+                        # get center of tracked object and convert to pitch and yaw angles
                         center_x = tracking_result.get("center_x", 0.0)
                         center_y = tracking_result.get("center_y", 0.0)
                         pitch_angle_rad = radians(center_y * camera_vfov * 0.5)
@@ -247,13 +253,28 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
                         mavlink_start_time = time.time()
                         send_result = mavlink_interface.send_gimbal_manager_set_pitchyaw(
                             sysid=target_system_id,   # system ID of the target vehicle
-                            pitch_rad=pitch_angle_rad,  # pitch angle in radians
-                            yaw_rad=yaw_angle_rad,      # yaw angle in radians
+                            pitch_rad=pitch_angle_rad,    # pitch angle in radians
+                            yaw_rad=yaw_angle_rad,        # yaw angle in radians
                         )
                         mavlink_send_time = time.time() - mavlink_start_time
 
                         if send_result["success"]:
                             sent_count += 1
+                            
+                            # Send tracking status update
+                            mavlink_interface.send_camera_tracking_image_status(
+                                sysid=target_system_id,
+                                tracking_status="CAMERA_TRACKING_STATUS_FLAGS_ACTIVE",
+                                tracking_mode="CAMERA_TRACKING_MODE_RECTANGLE",
+                                target_data="CAMERA_TRACKING_TARGET_DATA_NONE",
+                                point_x=(center_x + 1.0) * 0.5,  # Convert from -1..1 to 0..1
+                                point_y=(center_y + 1.0) * 0.5,  # Convert from -1..1 to 0..1
+                                radius=0.1,
+                                rec_top_x=0.0,
+                                rec_top_y=0.0,
+                                rec_bottom_x=1.0,
+                                rec_bottom_y=1.0
+                            )
                         else:
                             logger.error(f"{logging_prefix_str} Failed to send GIMBAL_MANAGER_SET_PITCHYAW: {send_result['message']}")
 
@@ -261,6 +282,21 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
                         last_send_time = time.time()
                     else:
                         logger.debug(f"{logging_prefix_str} tracking failed: {tracking_result.get('message', 'unknown error')}")
+                        
+                        # Send tracking lost status
+                        mavlink_interface.send_camera_tracking_image_status(
+                            sysid=target_system_id,
+                            tracking_status="CAMERA_TRACKING_STATUS_FLAGS_IDLE",
+                            tracking_mode="CAMERA_TRACKING_MODE_NONE",
+                            target_data="CAMERA_TRACKING_TARGET_DATA_NONE",
+                            point_x=0.5,
+                            point_y=0.5,
+                            radius=0.0,
+                            rec_top_x=0.0,
+                            rec_top_y=0.0,
+                            rec_bottom_x=1.0,
+                            rec_bottom_y=1.0
+                        )
                 else:
                     # log that we are waiting for gimbal to face downwards
                     logger.debug(f"{logging_prefix_str} waiting for gimbal to face downwards")
@@ -274,6 +310,7 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
                                  f"Total:{loop_total_time*1000:.1f}ms "
                                  f"FrameCapture:{frame_capture_time*1000:.1f}ms "
                                  f"GimbalCheck:{gimbal_check_time*1000:.1f}ms "
+                                 f"CommandCheck:{command_check_time*1000:.1f}ms "
                                  f"Tracking:{tracking_time*1000:.1f}ms "
                                  f"MAVLinkSend:{mavlink_send_time*1000:.1f}ms")
 
@@ -310,6 +347,49 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
         logger.info(f"{logging_prefix_str} stopped")
 
 
+# Check for incoming camera tracking commands
+def check_for_tracking_commands(target_system_id: int):
+    """Check for tracking commands from the user"""
+
+    # logging prefix for all messages from this function
+    logging_prefix_str = "check_for_tracking_commands:"
+
+    # poll for new tracking commands
+    command_result = mavlink_interface.get_camera_tracking_commands(target_system_id)
+
+    if command_result["success"] and command_result["command"] is not None:
+        try:
+            # Handle different command types directly
+            if command_result["command"] == "TRACK_POINT":
+                # Extract point coordinates and call set_point_normalised
+                point_x = command_result.get("point_x", 0.5)
+                point_y = command_result.get("point_y", 0.5)
+                radius = command_result.get("radius", 0.1)
+
+                tracking.set_point_normalised((point_x, point_y, radius))
+                logger.info(f"{logging_prefix_str} Set point tracking: ({point_x:.3f}, {point_y:.3f}), radius={radius:.3f}")
+
+            elif command_result["command"] == "TRACK_RECTANGLE":
+                # Extract rectangle coordinates and call set_rectangle_normalised
+                top_left_x = command_result.get("top_left_x", 0.45)
+                top_left_y = command_result.get("top_left_y", 0.45)
+                bottom_right_x = command_result.get("bottom_right_x", 0.55)
+                bottom_right_y = command_result.get("bottom_right_y", 0.55)
+
+                tracking.set_rectangle_normalised((top_left_x, top_left_y, bottom_right_x, bottom_right_y))
+                logger.info(f"{logging_prefix_str} Set rectangle tracking: ({top_left_x:.3f}, {top_left_y:.3f}) to ({bottom_right_x:.3f}, {bottom_right_y:.3f})")
+
+            # Send success messages
+            mavlink_interface.send_statustext_msg(target_system_id, f"VisualFollow: tracking {command_result['command'].lower()}")
+
+            # Send command acknowledgment
+            mavlink_interface.send_command_ack(target_system_id, f"MAV_CMD_CAMERA_{command_result['command']}", "MAV_RESULT_ACCEPTED")
+                
+        except Exception as e:
+            logger.error(f"{logging_prefix_str} Error processing tracking command: {str(e)}")
+            mavlink_interface.send_command_ack(target_system_id, f"MAV_CMD_CAMERA_{command_result['command']}", "MAV_RESULT_DENIED")
+
+
 # Test RTSP connection using OpenCV with FFMPEG backend
 # Called from index.html's Test button
 def test_rtsp_connection(rtsp_url: str, camera_type: str) -> Dict[str, Any]:
@@ -335,7 +415,7 @@ def test_rtsp_connection(rtsp_url: str, camera_type: str) -> Dict[str, Any]:
         height = frame_result["height"]
 
         # Test tracking calculation
-        tracking_result = tracking.get_tracking(frame, None, True)
+        tracking_result = tracking.get_tracking(frame, True)
 
         # Encode frame as base64 (use augmented image if available)
         if tracking_result.get("success") and tracking_result.get("image_base64"):
@@ -647,6 +727,83 @@ async def stop_visualfollow() -> Dict[str, Any]:
     except Exception as e:
         logger.exception(f"Error stopping visual follow: {str(e)}")
         return {"success": False, "message": f"Failed to stop: {str(e)}"}
+
+
+# Set tracking ROI manually (for testing)
+@app.post("/visual-follow/set-roi")
+async def set_tracking_roi(
+    x: float = Query(..., description="Normalized X coordinate (0..1)"),
+    y: float = Query(..., description="Normalized Y coordinate (0..1)"), 
+    width: float = Query(..., description="Normalized width (0..1)"),
+    height: float = Query(..., description="Normalized height (0..1)")
+) -> Dict[str, Any]:
+    """Set tracking ROI manually for testing"""
+    logger.info(f"Manual ROI set: x={x}, y={y}, width={width}, height={height}")
+    
+    try:
+        # Get current frame to initialize tracker
+        settings_data = settings.get_last_used()
+        rtsp_url = settings_data.get("rtsp")
+        
+        if not rtsp_url:
+            return {"success": False, "message": "No RTSP URL configured"}
+        
+        # Capture a frame
+        frame_result = image_capture.capture_frame_from_stream(rtsp_url)
+        if not frame_result["success"]:
+            return {"success": False, "message": f"Failed to capture frame: {frame_result['message']}"}
+        
+        frame = frame_result["frame"]
+        img_width = frame_result["width"]
+        img_height = frame_result["height"]
+        
+        # Convert normalized coordinates to pixel coordinates
+        pixel_x = int(x * img_width)
+        pixel_y = int(y * img_height)
+        pixel_width = int(width * img_width)
+        pixel_height = int(height * img_height)
+        
+        # Ensure coordinates are within bounds
+        pixel_x = max(0, min(pixel_x, img_width - 1))
+        pixel_y = max(0, min(pixel_y, img_height - 1))
+        pixel_width = max(1, min(pixel_width, img_width - pixel_x))
+        pixel_height = max(1, min(pixel_height, img_height - pixel_y))
+        
+        roi = (pixel_x, pixel_y, pixel_width, pixel_height)
+        
+        # Initialize tracker
+        init_result = tracking.initialize_tracker(frame, roi)
+        
+        if init_result["success"]:
+            return {
+                "success": True,
+                "message": f"ROI set successfully: {roi}",
+                "roi": roi,
+                "normalized": {"x": x, "y": y, "width": width, "height": height}
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Failed to initialize tracker: {init_result['message']}"
+            }
+            
+    except Exception as e:
+        logger.exception(f"Error setting ROI: {str(e)}")
+        return {"success": False, "message": f"Error setting ROI: {str(e)}"}
+
+
+# Clear tracking ROI
+@app.post("/visual-follow/clear-roi")
+async def clear_tracking_roi() -> Dict[str, Any]:
+    """Clear/reset tracking ROI"""
+    logger.info("Clearing tracking ROI")
+    
+    try:
+        tracking.clear_roi()
+        return {"success": True, "message": "Tracking ROI cleared"}
+    except Exception as e:
+        logger.exception(f"Error clearing ROI: {str(e)}")
+        return {"success": False, "message": f"Error clearing ROI: {str(e)}"}
 
 
 # Initialize auto-restart task
