@@ -744,53 +744,34 @@ async def set_tracking_roi(
 ) -> Dict[str, Any]:
     """Set tracking ROI manually for testing"""
     logger.info(f"Manual ROI set: x={x}, y={y}, width={width}, height={height}")
-    
+
     try:
-        # Get current frame to initialize tracker
-        settings_data = settings.get_last_used()
-        rtsp_url = settings_data.get("rtsp")
+        # Validate coordinates
+        if not (0 <= x <= 1 and 0 <= y <= 1 and 0 <= width <= 1 and 0 <= height <= 1):
+            return {"success": False, "message": "All coordinates must be between 0 and 1"}
         
-        if not rtsp_url:
-            return {"success": False, "message": "No RTSP URL configured"}
-        
-        # Capture a frame
-        frame_result = image_capture.capture_frame_from_stream(rtsp_url)
-        if not frame_result["success"]:
-            return {"success": False, "message": f"Failed to capture frame: {frame_result['message']}"}
-        
-        frame = frame_result["frame"]
-        img_width = frame_result["width"]
-        img_height = frame_result["height"]
-        
-        # Convert normalized coordinates to pixel coordinates
-        pixel_x = int(x * img_width)
-        pixel_y = int(y * img_height)
-        pixel_width = int(width * img_width)
-        pixel_height = int(height * img_height)
-        
-        # Ensure coordinates are within bounds
-        pixel_x = max(0, min(pixel_x, img_width - 1))
-        pixel_y = max(0, min(pixel_y, img_height - 1))
-        pixel_width = max(1, min(pixel_width, img_width - pixel_x))
-        pixel_height = max(1, min(pixel_height, img_height - pixel_y))
-        
-        roi = (pixel_x, pixel_y, pixel_width, pixel_height)
-        
-        # Initialize tracker
-        init_result = tracking.initialize_tracker(frame, roi)
-        
-        if init_result["success"]:
-            return {
-                "success": True,
-                "message": f"ROI set successfully: {roi}",
-                "roi": roi,
-                "normalized": {"x": x, "y": y, "width": width, "height": height}
+        if x + width > 1 or y + height > 1:
+            return {"success": False, "message": "ROI extends beyond image bounds"}
+
+        # Convert to rectangle format: (top_left_x, top_left_y, bottom_right_x, bottom_right_y)
+        top_left_x = x
+        top_left_y = y
+        bottom_right_x = x + width
+        bottom_right_y = y + height
+
+        # Use the tracking module's set_rectangle_normalised function
+        tracking.set_rectangle_normalised((top_left_x, top_left_y, bottom_right_x, bottom_right_y))
+
+        return {
+            "success": True,
+            "message": f"ROI set successfully using normalized coordinates",
+            "normalized": {
+                "top_left_x": top_left_x,
+                "top_left_y": top_left_y,
+                "bottom_right_x": bottom_right_x,
+                "bottom_right_y": bottom_right_y
             }
-        else:
-            return {
-                "success": False,
-                "message": f"Failed to initialize tracker: {init_result['message']}"
-            }
+        }
             
     except Exception as e:
         logger.exception(f"Error setting ROI: {str(e)}")
