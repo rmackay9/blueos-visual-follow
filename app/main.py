@@ -240,10 +240,15 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
                         camera_vfov = calculate_vertical_fov(camera_hfov, width, height)
 
                         # get center of tracked object and convert to pitch and yaw angles
-                        center_x = tracking_result.get("center_x", 0.0)
-                        center_y = tracking_result.get("center_y", 0.0)
-                        pitch_angle_rad = radians(center_y * camera_vfov * 0.5)
-                        yaw_angle_rad = radians(center_x * camera_hfov * 0.5)
+                        center_x = tracking_result.get("center_x", 0.5)  # 0.5 is center
+                        center_y = tracking_result.get("center_y", 0.5)  # 0.5 is center
+                        
+                        # Convert from 0-1 range to -1 to +1 range for angle calculations
+                        center_x_normalized = (center_x - 0.5) * 2  # Convert 0-1 to -1 to +1
+                        center_y_normalized = (center_y - 0.5) * 2  # Convert 0-1 to -1 to +1
+                        
+                        pitch_angle_rad = radians(center_y_normalized * camera_vfov * 0.5)
+                        yaw_angle_rad = radians(center_x_normalized * camera_hfov * 0.5)
 
                         logger.debug(f"{logging_prefix_str} Frame:{frame_count} "
                                         f"center_x={center_x:.4f}, center_y={center_y:.4f} "
@@ -267,8 +272,8 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
                                 tracking_status="CAMERA_TRACKING_STATUS_FLAGS_ACTIVE",
                                 tracking_mode="CAMERA_TRACKING_MODE_RECTANGLE",
                                 target_data="CAMERA_TRACKING_TARGET_DATA_NONE",
-                                point_x=(center_x + 1.0) * 0.5,  # Convert from -1..1 to 0..1
-                                point_y=(center_y + 1.0) * 0.5,  # Convert from -1..1 to 0..1
+                                point_x=center_x,  # Already in 0..1 range
+                                point_y=center_y,  # Already in 0..1 range
                                 radius=0.1,
                                 rec_top_x=0.0,
                                 rec_top_y=0.0,

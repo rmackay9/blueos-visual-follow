@@ -133,12 +133,12 @@ def get_tracking(image: np.ndarray, include_augmented_image: bool) -> Dict[str, 
     Returns:
         Dictionary containing:
         - success: bool indicating if detection was successful
-        - center_x: normalised horizontal value of the tracked object (-1 is left, +1 is right)
-        - center_y: normalised vertical value of the tracked object (-1 is top, +1 is bottom)
-        - box_x: normalised bounding box top-left corner x coordinate (-1 to +1)
-        - box_y: normalised bounding box top-left corner y coordinate (-1 to +1)
-        - box_width: normalised bounding box width (-1 to +1)
-        - box_height: normalised bounding box height (-1 to +1)
+        - center_x: normalised horizontal value of the tracked object (0 is left, 1 is right)
+        - center_y: normalised vertical value of the tracked object (0 is top, 1 is bottom)
+        - box_x: normalised bounding box top-left corner x coordinate (0 to 1)
+        - box_y: normalised bounding box top-left corner y coordinate (0 to 1)
+        - box_width: normalised bounding box width (0 to 1)
+        - box_height: normalised bounding box height (0 to 1)
         - message: Status message
         - image_base64: Base64 encoded image, None if not requested or could not be generated
     """
@@ -209,13 +209,13 @@ def get_tracking(image: np.ndarray, include_augmented_image: bool) -> Dict[str, 
         center_x = box_x + (box_width // 2)
         center_y = box_y + (box_height // 2)
 
-        # normalize coordinates to -1 to +1 range
-        norm_center_x = (center_x / image_width) * 2 - 1  # -1 (left) to +1 (right)
-        norm_center_y = (center_y / image_height) * 2 - 1  # -1 (top) to +1 (bottom)
-        norm_box_x = (box_x / image_width) * 2 - 1
-        norm_box_y = (box_y / image_height) * 2 - 1
-        norm_box_width = (box_width / image_width) * 2
-        norm_box_height = (box_height / image_height) * 2
+        # normalize coordinates to 0 to 1 range
+        norm_center_x = center_x / image_width  # 0 (left) to 1 (right)
+        norm_center_y = center_y / image_height  # 0 (top) to 1 (bottom)
+        norm_box_x = box_x / image_width
+        norm_box_y = box_y / image_height
+        norm_box_width = box_width / image_width
+        norm_box_height = box_height / image_height
 
         # Create augmented image
         image_base64 = None
