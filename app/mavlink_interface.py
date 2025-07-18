@@ -248,10 +248,10 @@ def send_statustext_msg(sysid: int,
 
 # Send GIMBAL_MANAGER gimbal pitch/yaw command via COMMAND_LONG
 def send_gimbal_manager_set_pitchyaw(sysid: int,
-                                     pitch: float,
-                                     yaw: float,
-                                     pitch_rate: float = float('nan'),
-                                     yaw_rate: float = float('nan'),
+                                     pitch_rad: float,
+                                     yaw_rad: float,
+                                     pitch_rate_rads: float = float('nan'),
+                                     yaw_rate_rads: float = float('nan'),
                                      flags: int = 0,
                                      gimbal_device_id: int = 0) -> Dict[str, Any]:
     """
@@ -280,10 +280,10 @@ def send_gimbal_manager_set_pitchyaw(sysid: int,
             component_id=MAV_COMP_ID_ONBOARD_COMPUTER,
             target_system=sysid,  # target system is the same as sysid
             target_component=1,  # always use 1 for autopilot
-            pitch=pitch,
-            yaw=yaw,
-            pitch_rate=pitch_rate,
-            yaw_rate=yaw_rate,
+            pitch=pitch_rad,
+            yaw=yaw_rad,
+            pitch_rate=pitch_rate_rads,
+            yaw_rate=yaw_rate_rads,
             flags=flags,
             gimbal_device_id=gimbal_device_id
         )
@@ -297,10 +297,10 @@ def send_gimbal_manager_set_pitchyaw(sysid: int,
             return {
                 "success": True,
                 "message": f"MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW command sent successfully with SysID {sysid} CompID {MAV_COMP_ID_ONBOARD_COMPUTER}",
-                "pitch": pitch,
-                "yaw": yaw,
-                "pitch_rate": pitch_rate,
-                "yaw_rate": yaw_rate,
+                "pitch": pitch_rad,
+                "yaw": yaw_rad,
+                "pitch_rate": pitch_rate_rads,
+                "yaw_rate": yaw_rate_rads,
                 "target_system": sysid,
                 "target_component": 1,
                 "response": response
@@ -703,55 +703,3 @@ def send_set_message_interval(sysid: int,  # target system id
             "message": f"Unexpected error: {str(e)}",
             "unexpected_error": True
         }
-
-
-# Send GIMBAL_MANAGER gimbal pitch/yaw command via COMMAND_LONG using degrees
-def send_gimbal_manager_set_pitchyaw_degrees(sysid: int,
-                                           pitch_degrees: float,
-                                           yaw_degrees: float,
-                                           pitch_rate_degrees: float = float('nan'),
-                                           yaw_rate_degrees: float = float('nan'),
-                                           flags: int = 0,
-                                           gimbal_device_id: int = 0) -> Dict[str, Any]:
-    """
-    Send COMMAND_LONG with MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW command using degrees
-
-    Args:
-        sysid: System ID to send message from (normally 1)
-        pitch_degrees: Pitch angle in degrees (negative = down)
-        yaw_degrees: Yaw angle in degrees (positive = right)
-        pitch_rate_degrees: Pitch rate in degrees/second (NaN to use default)
-        yaw_rate_degrees: Yaw rate in degrees/second (NaN to use default)
-        flags: Gimbal manager flags (0 for default)
-        gimbal_device_id: Gimbal device ID (0 for primary gimbal)
-
-    Returns:
-        Dictionary with send results
-    """
-    import math
-    
-    # Convert degrees to radians
-    pitch_rad = math.radians(pitch_degrees)
-    yaw_rad = math.radians(yaw_degrees)
-    
-    # Convert rates from degrees/sec to radians/sec
-    if not math.isnan(pitch_rate_degrees):
-        pitch_rate_rad = math.radians(pitch_rate_degrees)
-    else:
-        pitch_rate_rad = pitch_rate_degrees
-        
-    if not math.isnan(yaw_rate_degrees):
-        yaw_rate_rad = math.radians(yaw_rate_degrees)
-    else:
-        yaw_rate_rad = yaw_rate_degrees
-    
-    # Call the main function with radians
-    return send_gimbal_manager_set_pitchyaw(
-        sysid=sysid,
-        pitch=pitch_rad,
-        yaw=yaw_rad,
-        pitch_rate=pitch_rate_rad,
-        yaw_rate=yaw_rate_rad,
-        flags=flags,
-        gimbal_device_id=gimbal_device_id
-    )

@@ -226,7 +226,7 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
 
                     # Perform visual follow calculation
                     tracking_start_time = time.time()
-                    tracking_result = tracking.get_tracking_flow(frame, None, False)
+                    tracking_result = tracking.get_tracking(frame, None, False)
                     tracking_time = time.time() - tracking_start_time
 
                     if tracking_result.get("success"):
@@ -236,19 +236,19 @@ async def start_visualfollow_internal(camera_type: str, rtsp_url: str):
                         # get center of tracked object and conver to pitch and yaw angles
                         center_x = tracking_result.get("center_x", 0.0)
                         center_y = tracking_result.get("center_y", 0.0)
-                        pitch_angle_deg = center_y * camera_vfov * 0.5
-                        yaw_angle_deg = center_x * camera_hfov * 0.5
+                        pitch_angle_rad = radians(center_y * camera_vfov * 0.5)
+                        yaw_angle_rad = radians(center_x * camera_hfov * 0.5)
 
                         logger.debug(f"{logging_prefix_str} Frame:{frame_count} "
                                         f"center_x={center_x:.4f}, center_y={center_y:.4f} "
-                                        f"pitch={pitch_angle_deg:.4f}, yaw={yaw_angle_deg:.4f}")
+                                        f"pitch={degrees(pitch_angle_rad):.2f}, yaw={degrees(yaw_angle_rad):.2f}")
 
                         # Send GIMBAL_MANAGER_PITCH_YAW message
                         mavlink_start_time = time.time()
                         send_result = mavlink_interface.send_gimbal_manager_set_pitchyaw(
                             sysid=target_system_id,   # system ID of the target vehicle
-                            pitch=pitch_angle_deg,    # pitch angle in degrees
-                            yaw=yaw_angle_deg,        # yaw angle in degrees
+                            pitch_rad=pitch_angle_rad,  # pitch angle in radians
+                            yaw_rad=yaw_angle_rad,      # yaw angle in radians
                         )
                         mavlink_send_time = time.time() - mavlink_start_time
 
@@ -335,7 +335,7 @@ def test_rtsp_connection(rtsp_url: str, camera_type: str) -> Dict[str, Any]:
         height = frame_result["height"]
 
         # Test tracking calculation
-        tracking_result = tracking.get_tracking_flow(frame, None, True)
+        tracking_result = tracking.get_tracking(frame, None, True)
 
         # Encode frame as base64 (use augmented image if available)
         if tracking_result.get("success") and tracking_result.get("image_base64"):
@@ -528,7 +528,7 @@ async def get_visualfollow_enabled_state() -> Dict[str, Any]:
 async def save_enabled_state(enabled: bool = Query(...)) -> Dict[str, Any]:
     """Save enabled state to persistent storage (using query parameter)"""
     logger.info(f"Enabled state: {enabled}")
-    success = settings.update_enabled(enabled)
+    success = settings.update_visualfollow_enabled(enabled)
 
     if success:
         return {"success": True, "message": f"Enabled state saved: {enabled}"}
